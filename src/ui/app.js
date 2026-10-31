@@ -148,49 +148,112 @@ function formatRemaining(endsAt) {
 const multi = new Set();
 
 function renderTabs() {
-  const existing = new Map([...tabsEl.children].map((el) => [el.dataset.id, el]));
-  state.tabs.forEach((tab, index) => {
-    let el = existing.get(tab.id);
+  // Index existing DOM by role-prefixed key so group chips and tab divs don't collide.
+  const existing = new Map();
+  for (const el of tabsEl.children) {
+    const k = el.dataset.id ? `tab:${el.dataset.id}` : el.dataset.groupId ? `grp:${el.dataset.groupId}` : null;
+    if (k) existing.set(k, el);
+  }
+  const collapsedGroups = new Set((state.tabGroups || []).filter((g) => g.collapsed).map((g) => g.id));
+  const emittedGroups = new Set();
+  const nextChildren = [];
+
+  const buildOrUpdateGroupChip = (grp) => {
+    const key = `grp:${grp.id}`;
+    let el = existing.get(key);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'group-chip';
+      el.dataset.groupId = grp.id;
+      el.innerHTML = '<span class="gc-dot"></span><span class="gc-name"></span><span class="gc-count"></span>';
+    }
+    existing.delete(key);
+    const members = state.tabs.filter((t) => t.groupId === grp.id).length;
+    el.querySelector('.gc-dot').style.background = grp.color;
+    el.querySelector('.gc-name').textContent = grp.name;
+    el.querySelector('.gc-count').textContent = grp.collapsed ? `+${members}` : '';
+    el.style.setProperty('--group-color', grp.color);
+    el.classList.toggle('collapsed', Boolean(grp.collapsed));
+    return el;
+  };
+
+  const buildOrUpdateTab = (tab) => {
+    const key = `tab:${tab.id}`;
+    let el = existing.get(key);
     if (!el) {
       el = document.createElement('div');
       el.className = 'tab';
       el.dataset.id = tab.id;
       el.setAttribute('role', 'tab');
-      // Note: HTML5 draggable deliberately NOT set — we drive reorder via pointer events (see
-      // the pointerdown/pointermove/pointerup handlers below), which work consistently inside
-      // #chrome { user-select: none } where HTML5 drag initiation is suppressed.
-      el.innerHTML = '<span class="slot"></span><img class="favicon" alt="" hidden><span class="spinner" hidden></span><span class="title"></span>'
+      el.innerHTML = '<span class="pin-dot" hidden title="Pinned"></span><span class="slot"></span><img class="favicon" alt="" hidden><span class="spinner" hidden></span>'
+        + '<span class="title"></span>'
+        + '<span class="order-chip" hidden title="Attached order"></span>'
         + '<span class="note-dot" hidden title="Has a note"></span><span class="timer" hidden></span>'
+        + '<span class="load-bar" hidden></span>'
         + '<button class="close" aria-label="Close tab">×</button>';
     }
-    existing.delete(tab.id);
+    existing.delete(key);
     el.querySelector('.slot').textContent = tab.slot;
     el.querySelector('.title').textContent = tab.title;
     el.querySelector('.spinner').hidden = !tab.loading;
+    el.querySelector('.load-bar').hidden = !tab.loading;
     el.querySelector('.note-dot').hidden = !tab.note;
+    el.querySelector('.pin-dot').hidden = !tab.pinned;
+    el.classList.toggle('pinned', Boolean(tab.pinned));
+    el.classList.toggle('attention', Boolean(tab.attention));
+    el.classList.toggle('in-group', Boolean(tab.groupId));
+    const chip = el.querySelector('.order-chip');
+    if (tab.orderId) { chip.textContent = `#${tab.orderId}`; chip.hidden = false; }
+    else chip.hidden = true;
     const fav = el.querySelector('.favicon');
-    // Hide favicon while loading so the spinner takes its slot; show otherwise if we have one.
     if (tab.favicon && !tab.loading) {
       if (fav.src !== tab.favicon) fav.src = tab.favicon;
       fav.hidden = false;
-    } else {
-      fav.hidden = true;
-    }
+    } else fav.hidden = true;
     const timer = el.querySelector('.timer');
     timer.hidden = !tab.timerEndsAt && !tab.timerDone;
     timer.dataset.endsAt = tab.timerEndsAt ?? '';
     timer.textContent = tab.timerDone ? 'Check' : tab.timerEndsAt ? formatRemaining(tab.timerEndsAt) : '';
-    el.title = `${tab.title}\n${tab.url}\n${tab.proxy ? `Proxy: ${tab.proxy}` : 'Local IP'}${tab.profileName ? `\nProfile: ${tab.profileName}` : ''}`;
+    // The native hover tooltip (title/url/proxy/profile) was cluttery and intrusive. Clear it so
+    // nothing pops when hovering a tab. Users can still see the URL in the address bar and the
+    // proxy/profile in the bottom status strip.
+    el.title = '';
+    el.removeAttribute('title');
     el.classList.toggle('has-error', Boolean(tab.error));
     el.classList.toggle('timer-done', tab.timerDone);
-    el.classList.toggle('multi-selected', multi.has(tab.id));
+    // When the multi-set is active, the currently focused tab counts as part of the bulk target
+    // too — give it the same multi-selected ring so the user sees "yes this one is included".
+    el.classList.toggle('multi-selected', multi.has(tab.id) || (multi.size > 0 && tab.id === state.selectedId));
+    if (tab.groupId) {
+      const grp = (state.tabGroups || []).find((g) => g.id === tab.groupId);
+      if (grp) el.style.setProperty('--group-color', grp.color);
+    } else el.style.removeProperty('--group-color');
     if (tab.color) el.style.setProperty('--tab-color', tab.color);
     else el.style.removeProperty('--tab-color');
     el.setAttribute('aria-selected', String(tab.id === state.selectedId));
-    if (tabsEl.children[index] !== el) tabsEl.insertBefore(el, tabsEl.children[index] ?? null);
+    return el;
+  };
+
+  state.tabs.forEach((tab) => {
+    // First tab of a group → emit the chip before it. Then skip member rendering if collapsed.
+    if (tab.groupId && !emittedGroups.has(tab.groupId)) {
+      emittedGroups.add(tab.groupId);
+      const grp = (state.tabGroups || []).find((g) => g.id === tab.groupId);
+      if (grp) nextChildren.push(buildOrUpdateGroupChip(grp));
+    }
+    if (tab.groupId && collapsedGroups.has(tab.groupId)) return;
+    nextChildren.push(buildOrUpdateTab(tab));
   });
-  for (const el of existing.values()) { multi.delete(el.dataset.id); el.remove(); }
-  // Scrolling forces a layout, so only do it when the selection actually moved.
+
+  // Reconcile DOM to the computed order.
+  for (let i = 0; i < nextChildren.length; i++) {
+    const el = nextChildren[i];
+    if (tabsEl.children[i] !== el) tabsEl.insertBefore(el, tabsEl.children[i] ?? null);
+  }
+  for (const el of existing.values()) {
+    if (el.dataset.id) multi.delete(el.dataset.id);
+    el.remove();
+  }
   if (renderTabs.scrolledTo !== state.selectedId) {
     renderTabs.scrolledTo = state.selectedId;
     tabsEl.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -235,8 +298,28 @@ function renderToolbar() {
   }
   region.value = tab?.region ?? '';
 
-  $('#error-bar').hidden = !tab?.error;
-  $('#error-text').textContent = tab?.error ?? '';
+  // Error strip disabled — the backend still tracks tab.error, but the inline red bar at the top
+  // of the page area is suppressed because it clutters the browser view. Errors still appear via
+  // the Recent messages popover (🕘 button on the status strip) and the per-tab `has-error`
+  // outline on the strip entry, so the user still sees that something failed.
+  $('#error-bar').hidden = true;
+
+  // The 🧹 Clear button adapts to multi-select. When any extras are selected it switches to a
+  // "Clear all selected" mode that wipes cookies on every selected tab; otherwise it keeps the
+  // original "Clear this tab + new IP + home" behavior.
+  const clearBtn = $('#clear-tab-btn');
+  if (clearBtn) {
+    const n = selectedTabIds().length;
+    if (multi.size > 0 && n > 1) {
+      clearBtn.textContent = `🧹 Clear ${n} tabs`;
+      clearBtn.title = `Clear cookies on all ${n} selected tabs.`;
+      clearBtn.dataset.mode = 'bulk';
+    } else {
+      clearBtn.textContent = '🧹 Clear tab';
+      clearBtn.title = "Clear this tab's cookies, cache and saved logins, give it a new IP from the pool, and reload";
+      clearBtn.dataset.mode = 'single';
+    }
+  }
 }
 
 // ---------- Tools panel ----------
@@ -359,6 +442,18 @@ noteEl.addEventListener('input', () => {
   noteTimer = setTimeout(flushNote, 300);
 });
 noteEl.addEventListener('blur', flushNote);
+// Cmd/Ctrl + Shift + T inside the note inserts the current time, so a rep can mark events as they
+// happen ("22:04 joined queue", "22:11 reached checkout") without reaching for the mouse.
+noteEl.addEventListener('keydown', (event) => {
+  if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== 't') return;
+  event.preventDefault();
+  const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const start = noteEl.selectionStart ?? noteEl.value.length;
+  const end = noteEl.selectionEnd ?? noteEl.value.length;
+  const insert = (noteEl.value.slice(0, start).endsWith('\n') || start === 0 ? '' : '\n') + stamp + ' ';
+  noteEl.setRangeText(insert, start, end, 'end');
+  noteEl.dispatchEvent(new Event('input', { bubbles: true }));
+});
 $('#note-copy').addEventListener('click', () => command('copy', undefined, noteEl.value));
 $('#note-insert').addEventListener('click', () => command('insertText', state.selectedId, noteEl.value));
 
@@ -729,6 +824,15 @@ function renderPickerList(tab = selectedTab()) {
     const text = document.createElement('div');
     text.className = 'label';
     const name = Object.assign(document.createElement('strong'), { textContent: `${p.favorite ? '★ ' : ''}${p.profile}` });
+    // Account-health dot: green=signed in, red=signed out, grey=unknown. Populated by the
+    // Profiles → Check All Account Logins action; results live in accountHealthByProfile.
+    const health = accountHealthByProfile.get(p.id);
+    if (health) {
+      const dot = document.createElement('span');
+      dot.className = `health-dot health-${health.status}`;
+      dot.title = `Health: ${health.status} — ${health.reason || 'click Check All to refresh'}`;
+      name.prepend(dot);
+    }
     if (slots.length > 0) {
       name.append(Object.assign(document.createElement('span'), {
         className: 'in-use-tag', textContent: slots.length === 1 ? `Tab ${slots[0]}` : `${slots.length} tabs`,
@@ -872,13 +976,296 @@ document.addEventListener('keydown', (event) => {
 // ---------- Dialogs ----------
 
 // Tab pages are drawn above this window's UI, so main hides the page while any dialog is open.
-const MODALS = ['#shortcuts-sheet', '#settings-sheet', '#orders-sheet', '#group-sheet', '#seat-test-sheet', '#palette'];
+const MODALS = ['#shortcuts-sheet', '#settings-sheet', '#orders-sheet', '#group-sheet', '#seat-test-sheet', '#palette', '#playbooks-sheet'];
 function setModal(selector, open) {
   $(selector).hidden = !open;
   window.fleet.setOverlay(MODALS.some((s) => !$(s).hidden));
 }
 $('#shortcuts-close').addEventListener('click', () => setModal('#shortcuts-sheet', false));
-$('#help-btn').addEventListener('click', () => setModal('#shortcuts-sheet', true));
+$('#help-btn').addEventListener('click', openShortcutsSheet);
+
+// Shortcuts sheet: rich, grouped, editable. Each row shows the label + description + current
+// accelerator. Clicking the accelerator turns the chip into a "listening…" box; press any key
+// combo and we save it, Esc cancels, Delete clears to the default.
+let shortcutsData = { actions: [], current: {}, defaults: {}, overrides: {} };
+let capturing = null; // { id, chip }
+
+async function openShortcutsSheet() {
+  shortcutsData = await window.fleet.getShortcuts();
+  renderShortcutsSheet();
+  setModal('#shortcuts-sheet', true);
+}
+function renderShortcutsSheet() {
+  const list = $('#shortcuts-list');
+  if (!list) return;
+  const { actions, current, defaults, overrides } = shortcutsData;
+  const groups = {};
+  for (const a of actions) (groups[a.group] ||= []).push(a);
+  list.replaceChildren(...Object.entries(groups).map(([groupName, acts]) => {
+    const section = document.createElement('section');
+    section.className = 'shortcut-group';
+    section.append(Object.assign(document.createElement('h4'), { textContent: groupName }));
+    for (const act of acts) {
+      const row = document.createElement('div');
+      row.className = 'shortcut-row';
+      const label = document.createElement('div');
+      label.className = 'shortcut-label';
+      label.append(
+        Object.assign(document.createElement('strong'), { textContent: act.label }),
+        Object.assign(document.createElement('span'), { textContent: act.description || '' }),
+      );
+      const chip = document.createElement('button');
+      chip.className = 'shortcut-chip';
+      chip.textContent = formatAccelerator(current[act.id] || defaults[act.id]);
+      chip.dataset.actionId = act.id;
+      // Static-scope rows (modifier variants like Shift-click, drag) aren't rebindable.
+      if (act.scope === 'renderer' && /inside|address bar/.test(current[act.id] || '')) {
+        chip.disabled = true;
+        chip.classList.add('readonly');
+      }
+      if (overrides[act.id]) chip.classList.add('customized');
+      row.append(label, chip);
+      section.append(row);
+    }
+    return section;
+  }));
+}
+function formatAccelerator(a) {
+  if (!a) return 'None';
+  return a
+    .replace(/CmdOrCtrl/g, navigator.platform.includes('Mac') ? '⌘' : 'Ctrl')
+    .replace(/Cmd/g, '⌘').replace(/Ctrl/g, 'Ctrl')
+    .replace(/Shift/g, '⇧').replace(/Alt/g, navigator.platform.includes('Mac') ? '⌥' : 'Alt')
+    .replace(/\+/g, ' ');
+}
+
+$('#shortcuts-list')?.addEventListener('click', (event) => {
+  const chip = event.target.closest('.shortcut-chip');
+  if (!chip || chip.disabled) return;
+  if (capturing) capturing.chip.classList.remove('capturing');
+  capturing = { id: chip.dataset.actionId, chip };
+  chip.classList.add('capturing');
+  chip.textContent = 'Press a key…';
+  chip.focus();
+});
+window.addEventListener('keydown', async (event) => {
+  if (!capturing) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    const prev = shortcutsData.current[capturing.id] || shortcutsData.defaults[capturing.id];
+    capturing.chip.textContent = formatAccelerator(prev);
+    capturing.chip.classList.remove('capturing');
+    capturing = null;
+    return;
+  }
+  // Delete clears the override — restore the default.
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    event.preventDefault();
+    const result = await window.fleet.setShortcut(capturing.id, '');
+    if (result?.current) shortcutsData.current = result.current;
+    delete shortcutsData.overrides[capturing.id];
+    capturing.chip.classList.remove('capturing', 'customized');
+    renderShortcutsSheet();
+    capturing = null;
+    return;
+  }
+  // Modifier-only keystrokes are a no-op — wait for a real key.
+  if (['Shift', 'Control', 'Meta', 'Alt'].includes(event.key)) return;
+  event.preventDefault();
+  const parts = [];
+  if (event.metaKey || event.ctrlKey) parts.push('CmdOrCtrl');
+  if (event.shiftKey) parts.push('Shift');
+  if (event.altKey) parts.push('Alt');
+  // Normalise letters: 'a' → 'A', punctuation stays as is; function keys use 'F1' etc.
+  let key = event.key;
+  if (key.length === 1) key = key.toUpperCase();
+  else if (/^f\d+$/i.test(key)) key = key.toUpperCase();
+  parts.push(key);
+  const accel = parts.join('+');
+  const result = await window.fleet.setShortcut(capturing.id, accel);
+  if (result?.error) {
+    showNotice(result.error);
+  } else {
+    shortcutsData.current = result.current;
+    shortcutsData.overrides[capturing.id] = accel;
+    renderShortcutsSheet();
+  }
+  capturing = null;
+});
+
+$('#shortcuts-reset')?.addEventListener('click', async () => {
+  if (!confirm('Restore every shortcut to its default?')) return;
+  const result = await window.fleet.resetShortcuts();
+  if (result?.current) {
+    shortcutsData.current = result.current;
+    shortcutsData.overrides = {};
+    renderShortcutsSheet();
+    showNotice('Shortcuts restored to defaults.');
+  }
+});
+
+window.fleet.onShortcutsChanged?.(({ accelerators }) => {
+  shortcutsData.current = accelerators;
+  if (!$('#shortcuts-sheet').hidden) renderShortcutsSheet();
+});
+
+// Recording + Playbooks panel — one modal that acts as the home for everything related to
+// capture and replay. Opens on 📜 Playbooks click (or the toolbar Record button also surfaces
+// it after a stop). Live-updates to the recording state whenever onState fires, so the Start/Stop
+// button in the panel always matches reality.
+async function openPlaybooks() {
+  // Open the modal FIRST so the user always sees it, then populate. If anything in the list
+  // fetch throws, we still render the recording panel and show the empty state instead of silently
+  // doing nothing.
+  renderRecordingPanel();
+  setModal('#playbooks-sheet', true);
+  try { await renderPlaybooks(); } catch (error) {
+    const list = $('#playbooks-list');
+    if (list) list.replaceChildren(Object.assign(document.createElement('p'), {
+      className: 'shortcuts-hint',
+      textContent: `Could not load playbooks: ${error?.message || error}`,
+    }));
+  }
+}
+function renderRecordingPanel() {
+  const indicator = $('#recording-indicator');
+  const title = $('#recording-title');
+  const sub = $('#recording-sub');
+  const toggle = $('#recording-toggle');
+  if (!indicator) return;
+  if (state.recording) {
+    indicator.classList.add('active');
+    title.textContent = `Recording … ${state.recordedCount ?? 0} action${(state.recordedCount ?? 0) === 1 ? '' : 's'} captured`;
+    sub.textContent = 'Every click, input and navigation across all tabs is being saved. Click Stop to save as a playbook.';
+    toggle.textContent = 'Stop recording';
+    toggle.classList.remove('primary');
+    toggle.classList.add('burn');
+  } else {
+    indicator.classList.remove('active');
+    title.textContent = 'Not recording';
+    sub.textContent = 'Click Start to capture a flow across all tabs. Stop to save it as a playbook.';
+    toggle.textContent = 'Start recording';
+    toggle.classList.add('primary');
+    toggle.classList.remove('burn');
+  }
+}
+async function renderPlaybooks() {
+  const list = $('#playbooks-list');
+  if (!list) return;
+  const items = await window.fleet.listPlaybooks();
+  if (!items || items.length === 0) {
+    list.replaceChildren(Object.assign(document.createElement('p'), {
+      className: 'shortcuts-hint',
+      textContent: 'No playbooks yet. Click Start recording, do a flow, then Stop to save your first.',
+    }));
+    return;
+  }
+  list.replaceChildren(...items.map((p) => {
+    const row = document.createElement('div');
+    row.className = 'playbook-row';
+    const info = document.createElement('div');
+    info.className = 'playbook-info';
+    info.append(
+      Object.assign(document.createElement('strong'), { textContent: p.name }),
+      Object.assign(document.createElement('span'), {
+        textContent: `${p.actionCount} action${p.actionCount === 1 ? '' : 's'} · ${new Date(p.createdAt).toLocaleString()}${p.hostPatterns.length ? ` · ${p.hostPatterns.join(', ')}` : ''}`,
+      }),
+    );
+    const run = Object.assign(document.createElement('button'), { className: 'primary-soft', textContent: '▶ Run on current tab' });
+    run.dataset.runId = p.id;
+    const rename = Object.assign(document.createElement('button'), { textContent: 'Rename' });
+    rename.dataset.renameId = p.id;
+    rename.dataset.currentName = p.name;
+    const del = Object.assign(document.createElement('button'), { className: 'icon', textContent: '🗑', title: 'Delete playbook' });
+    del.dataset.deleteId = p.id;
+    row.append(info, run, rename, del);
+    return row;
+  }));
+}
+$('#playbooks-open')?.addEventListener('click', openPlaybooks);
+$('#playbooks-close')?.addEventListener('click', () => setModal('#playbooks-sheet', false));
+$('#recording-toggle')?.addEventListener('click', () => recordBtn.click()); // reuse the toolbar handler
+$('#playbooks-list')?.addEventListener('click', async (event) => {
+  const runId = event.target.closest('[data-run-id]')?.dataset.runId;
+  if (runId) {
+    const targetURL = $('#playbook-target-url').value.trim();
+    // Build an order-like object from the input fields. Any field left blank falls back to the
+    // playbook's recorded value for that step.
+    const low = Number($('#playbook-low-seat').value) || null;
+    const high = Number($('#playbook-high-seat').value) || low || null;
+    const order = {
+      section: $('#playbook-section').value.trim() || null,
+      row: $('#playbook-row').value.trim() || null,
+      lowSeat: low,
+      highSeat: high,
+      low_seat: low,
+      high_seat: high,
+      quantity: Number($('#playbook-qty').value) || null,
+    };
+    // Branch:
+    //  - URL given → open a NEW tab at that URL, run the playbook once it loads.
+    //  - URL blank → run on the currently focused tab.
+    if (targetURL) {
+      const result = await window.fleet.runPlaybookOnURL({ url: targetURL, playbookId: runId, order });
+      if (result?.error) { showNotice(result.error); return; }
+      setModal('#playbooks-sheet', false);
+      showNotice(`Opened ${targetURL} and started the playbook.`);
+      $('#playbook-target-url').value = '';
+      return;
+    }
+    const tab = selectedTab();
+    if (!tab) { showNotice('Select a tab first, or enter an Event URL.'); return; }
+    // If the tab already has an attached order from the Orders panel, prefer any blanks from the
+    // form falling back to that; otherwise the form fields win.
+    const tabOrder = tab.orderId ? orderState.orders.find((o) => String(o.id) === String(tab.orderId)) : null;
+    const merged = tabOrder ? { ...tabOrder, ...Object.fromEntries(Object.entries(order).filter(([, v]) => v != null)) } : order;
+    const result = await window.fleet.runPlaybook({ tabId: tab.id, playbookId: runId, order: merged });
+    if (result?.error) showNotice(result.error);
+    else { setModal('#playbooks-sheet', false); showNotice('Playbook started on the current tab.'); }
+    return;
+  }
+  const renameBtn = event.target.closest('[data-rename-id]');
+  if (renameBtn) {
+    const id = renameBtn.dataset.renameId;
+    const current = renameBtn.dataset.currentName || '';
+    // Inline rename: swap the strong element for an input, bind Enter / Esc.
+    const row = renameBtn.closest('.playbook-row');
+    const strong = row.querySelector('.playbook-info strong');
+    const input = Object.assign(document.createElement('input'), { type: 'text', value: current, className: 'playbook-rename-input' });
+    strong.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = async (save) => {
+      const next = input.value.trim();
+      if (save && next && next !== current) {
+        const result = await window.fleet.renamePlaybook({ id, name: next });
+        if (result?.error) showNotice(result.error);
+        else await renderPlaybooks();
+      } else {
+        await renderPlaybooks();
+      }
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') commit(true);
+      else if (e.key === 'Escape') commit(false);
+    });
+    input.addEventListener('blur', () => commit(true));
+    return;
+  }
+  const deleteId = event.target.closest('[data-delete-id]')?.dataset.deleteId;
+  if (deleteId) {
+    if (!confirm('Delete this playbook? Cannot be undone.')) return;
+    await window.fleet.deletePlaybook(deleteId);
+    renderPlaybooks();
+  }
+});
+
+// Live playbook-progress toasts (coalesced).
+window.fleet.onPlaybookProgress?.((info) => {
+  if (info.status === 'done') showNotice(`Playbook completed (${info.step} steps).`);
+  else if (info.status === 'miss') showNotice(`Playbook step ${info.step}: target missing — ${info.detail || ''}`, 8000);
+  else if (info.status === 'error') showNotice(`Playbook step ${info.step}: ${info.detail || 'error'}`, 8000);
+});
 
 // Developer test harness for the Ticketmaster seat matcher. Two paths from this modal:
 //   - "Inject into current tab" — reuses the current tab, assumes you're already on a TM event page.
@@ -943,10 +1330,25 @@ $('#seat-test-open').addEventListener('click', openSeatTest);
 const recordBtn = $('#record-toggle');
 recordBtn.addEventListener('click', async () => {
   if (state.recording) {
-    const result = await window.fleet.stopRecording();
-    if (result?.file) showNotice(`Recorded ${result.count} actions. Saved to ${result.file}`, 12000);
+    // Stop + auto-save as a playbook with a default name. No modal, no new tabs — the only side
+    // effect is a toast showing what happened and (if needed) how to find or rename the playbook.
+    // The user can rename it later from the Playbooks list (📜 Playbooks → right-click row).
+    const orderContext = selectedTab()?.orderId
+      ? orderState.orders.find((o) => String(o.id) === String(selectedTab().orderId))
+      : null;
+    const defaultName = `Playbook ${new Date().toLocaleString()}`;
+    const result = await window.fleet.stopRecording({ name: defaultName, orderContext });
+    if (result?.playbook) {
+      showNotice(`Saved playbook "${result.playbook.name}" with ${result.playbook.actions.length} actions.`, 6000);
+      openPlaybooks(); // show the dedicated management view so the user can rename / run
+    } else if (result?.count === 0) {
+      showNotice('Nothing was recorded.');
+    } else if (result?.file) {
+      showNotice(`Recorded ${result.count} actions.`);
+    }
   } else {
     await window.fleet.startRecording();
+    showNotice('Recording. Click Stop when you’re done — it saves as a playbook automatically.', 6000);
   }
 });
 function renderRecorderButton() {
@@ -1239,14 +1641,20 @@ function renderOrders() {
     row.classList.toggle('selected', o.id === orderState.selected?.id);
     row.classList.add(`order-${o.localStatus ?? 'new'}`);
     const cell = (text, className = '') => Object.assign(document.createElement('td'), { textContent: text ?? '', className });
-    const ordered = document.createElement('td');
-    ordered.className = 'stack';
-    const dot = document.createElement('span');
+    // Dedicated narrow cell for the status dot so it stays vertically centered with the row and
+    // doesn't push the Ordered column's stack onto a second line.
+    const dotCell = document.createElement('td');
+    dotCell.className = 'order-dot-cell';
+    const dot = document.createElement('button');
+    dot.type = 'button';
     dot.className = `order-dot s-${o.localStatus ?? 'new'}`;
     dot.title = `Status: ${titleCase(o.localStatus ?? 'new')} — click to cycle`;
     dot.dataset.statusToggle = o.id;
+    dot.setAttribute('aria-label', `Status: ${o.localStatus ?? 'new'}`);
+    dotCell.append(dot);
+    const ordered = document.createElement('td');
+    ordered.className = 'stack';
     ordered.append(
-      dot,
       Object.assign(document.createElement('strong'), { textContent: relativeAge(o.order_date) }),
       Object.assign(document.createElement('span'), { className: 'mono', textContent: `#${o.order_id ?? ''}` }),
     );
@@ -1274,9 +1682,14 @@ function renderOrders() {
     });
     done.dataset.markHandled = o.id;
     action.append(search, done);
+    const marketplace = document.createElement('td');
+    const pill = document.createElement('span');
+    pill.className = `marketplace-pill mp-${(o.marketplace || 'unknown').replace(/[^a-z0-9_]/gi, '-').toLowerCase()}`;
+    pill.textContent = titleCase(o.marketplace || 'unknown');
+    marketplace.append(pill);
     row.append(
-      ordered, event, when, cell(seatsOf(o)), cell(o.quantity, 'num'), cell(money(o.total), 'num'),
-      cell(titleCase(o.marketplace)), action,
+      dotCell, ordered, event, when, cell(seatsOf(o)), cell(o.quantity, 'num'), cell(money(o.total), 'num'),
+      marketplace, action,
     );
     return row;
   }));
@@ -1295,6 +1708,7 @@ function renderOrders() {
   else if (!loading && orders.length === 0) empty.textContent = 'No invoiced orders right now.';
   $('#orders-table').classList.toggle('loading', loading);
   $('#orders-refresh').disabled = loading;
+  $('#orders-loadbar').hidden = !loading;
   renderOrderDetail();
 }
 
@@ -1341,6 +1755,16 @@ function renderOrderDetail() {
   });
   search.dataset.search = order.id;
   panel.append(meta, when, search);
+  // Direct event URL if the Automatiq record carried one. Skips the TM search and lands straight
+  // on the ticket page — much faster, especially for non-TM marketplaces.
+  const directURL = order.event_url || order.primary_marketplace_url || order.ticket_url;
+  if (directURL && /^https?:\/\//i.test(directURL)) {
+    const openDirect = Object.assign(document.createElement('button'), {
+      className: 'primary detail-search', textContent: `Open event on ${titleCase(order.marketplace || 'site')}`,
+    });
+    openDirect.dataset.openDirect = order.id;
+    panel.append(openDirect);
+  }
   const shown = new Set();
   const addGroup = (title, keys) => {
     const rows = keys
@@ -1461,9 +1885,19 @@ $('#order-detail').addEventListener('click', (event) => {
   if (event.target.id === 'order-detail-close') {
     orderState.selected = null;
     renderOrders();
-  } else if (event.target.dataset.copy !== undefined) {
+    return;
+  }
+  if (event.target.dataset.copy !== undefined) {
     command('copy', undefined, event.target.dataset.copy);
     showNotice(`Copied ${event.target.title.replace(/^Copy /, '')}.`);
+    return;
+  }
+  // "Open event on <site>" button: route through the existing search flow so profile picker and
+  // seat-match payload attach, but with the direct URL instead of the TM search URL.
+  const directId = event.target.dataset.openDirect;
+  if (directId) {
+    const order = orderState.orders.find((o) => String(o.id) === directId);
+    if (order) searchOrderEvent(order);
   }
 });
 
@@ -1987,12 +2421,41 @@ function render() {
   launcher.hidden = inBrowser;
   browser.hidden = !inBrowser;
   if (!inBrowser) return renderLaunchGroups();
+  // Dense tab strip once the session grows past 15 tabs — the body uses a class to shrink
+  // padding / font-size / minimum tab width, so a 25-tab shift still fits one row on a 13" screen.
+  document.body.classList.toggle('tabs-dense', state.tabs.length >= 15);
   renderTabs();
   renderToolbar();
   renderPanel();
   renderRecorderButton();
   renderStatusStrip();
+  renderFavoriteProfiles();
+  if (!$('#playbooks-sheet').hidden) renderRecordingPanel();
 }
+
+// Favorite profiles (profile.favorite === true in profiles.json) show up as compact chips in the
+// toolbar — click opens a NEW tab with that profile already attached. Keeps the common accounts a
+// mouse click away without going through the Profiles panel.
+function renderFavoriteProfiles() {
+  const strip = $('#fav-profiles');
+  if (!strip) return;
+  const favs = (profiles || []).filter((p) => p.favorite && (!state.activeGroup || groupOf(p) === state.activeGroup)).slice(0, 8);
+  strip.replaceChildren(...favs.map((p) => {
+    const chip = document.createElement('button');
+    chip.className = 'fav-chip';
+    chip.textContent = (p.profile || '?').slice(0, 1).toUpperCase();
+    chip.title = `New tab with ${p.profile}`;
+    chip.dataset.profileId = p.id;
+    if (p.color) chip.style.background = p.color;
+    return chip;
+  }));
+  strip.hidden = favs.length === 0;
+}
+document.addEventListener('click', (event) => {
+  const chip = event.target.closest('#fav-profiles .fav-chip');
+  if (!chip) return;
+  command('newTab', undefined, { smart: false, profileId: chip.dataset.profileId });
+});
 
 // Bottom status strip — the ambient info users keep re-querying through tooltips and panels.
 // Shows: isolation mode, current tab's proxy IP + kind, current tab's profile, open-tab count,
@@ -2008,11 +2471,20 @@ function renderStatusStrip() {
   const proxy = tab?.proxy
     ? `${tab.proxy}${tab.proxyKind && tab.proxyKind !== 'pinned' ? ` (${tab.proxyKind})` : ''}`
     : 'Direct';
+  // When any pool proxies are in cooldown, append "N cool" so the rep notices the pool is shrinking.
+  const stats = state.poolStats;
+  const cooldownNote = stats && stats.cool > 0 ? ` · ${stats.cool} of ${stats.total} cooling` : '';
   const profile = tab?.profileName || '—';
   strip.querySelector('.st-mode').innerHTML = `<strong>${mode}</strong>`;
-  strip.querySelector('.st-proxy').innerHTML = `🌐 ${escapeHTML(proxy)}`;
+  strip.querySelector('.st-proxy').innerHTML = `🌐 ${escapeHTML(proxy)}${escapeHTML(cooldownNote)}`;
   strip.querySelector('.st-profile').innerHTML = `👤 ${escapeHTML(profile)}`;
-  strip.querySelector('.st-tabs').innerHTML = `🪟 ${state.tabs.length} tab${state.tabs.length === 1 ? '' : 's'}`;
+  const attn = state.tabs.filter((t) => t.attention).length;
+  const attnText = attn > 0 ? ` · ⚡ ${attn} need you` : '';
+  // When any extras are multi-selected, surface the bulk-target count so the user sees how many
+  // tabs the next ⌘1/⌘2/⌘3 will act on (always includes the currently focused tab).
+  const bulkCount = selectedTabIds().length;
+  const selectedText = multi.size > 0 ? ` · ✓ ${bulkCount} selected` : '';
+  strip.querySelector('.st-tabs').innerHTML = `🪟 ${state.tabs.length} tab${state.tabs.length === 1 ? '' : 's'}${escapeHTML(attnText)}${escapeHTML(selectedText)}`;
   const mins = Math.floor((Date.now() - sessionStartedAt) / 60000);
   const label = mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
   strip.querySelector('.st-timer').innerHTML = `⏱ ${label}`;
@@ -2044,6 +2516,9 @@ tabsEl.addEventListener('click', (event) => {
   // A drag ends with a click synthesized on the pointerup target; drop that click so we don't
   // select-navigate to a random tab the user actually dragged over.
   if (suppressNextClick) { suppressNextClick = false; event.stopImmediatePropagation(); event.preventDefault(); return; }
+  // Group chip click → toggle collapse. Right-click (handled below separately) opens the group menu.
+  const chip = event.target.closest('.group-chip');
+  if (chip) { command('toggleGroupCollapse', undefined, chip.dataset.groupId); return; }
   const el = event.target.closest('.tab');
   if (!el) return;
   if (event.target.closest('.close')) {
@@ -2156,9 +2631,15 @@ tabsEl.addEventListener('pointercancel', () => {
 // Cmd/Ctrl + 1 opens the login page on every selected tab (autoLogin fills credentials too).
 // Cmd/Ctrl + 2 fills the current form and submits it on every selected tab (autofillSubmit).
 // When nothing is multi-selected, both shortcuts fall back to the one visible tab so they still work.
+// The target set for bulk shortcuts: the currently visible tab PLUS everything in the multi-set.
+// Previously this returned only `multi` when it was non-empty, which meant Cmd-clicking a few
+// extra tabs made the currently focused tab silently drop out of the bulk operation — unexpected.
+// Now the focused tab always participates.
 function selectedTabIds() {
-  if (multi.size > 0) return [...multi];
-  return state.selectedId ? [state.selectedId] : [];
+  const ids = new Set();
+  if (state.selectedId) ids.add(state.selectedId);
+  for (const id of multi) ids.add(id);
+  return [...ids];
 }
 
 // Shared bulk-action runner for Ctrl/Cmd + 1 and Ctrl/Cmd + 2 — triggered BOTH from the in-page
@@ -2191,6 +2672,74 @@ function runBulkShortcut(name) {
   });
 }
 window.fleet.onBulkShortcut(runBulkShortcut);
+
+// Main process asks us to prompt for a watch pattern (text or /regex/). Simple prompt() is enough
+// here — the input is non-sensitive and this stays out of the way.
+window.fleet.onPromptWatch?.(({ tabId, current }) => {
+  const value = window.prompt('Watch this tab for a URL pattern (substring or /regex/):', current || '');
+  if (value === null) return; // cancelled
+  command('setWatchPattern', tabId, value);
+  if (value.trim()) showNotice(`Watching tab for "${value.trim()}"`);
+  else showNotice('Watch cleared.');
+});
+
+// Click an attention-flagged tab to acknowledge and clear the flag.
+tabsEl.addEventListener('click', (event) => {
+  const el = event.target.closest('.tab.attention');
+  if (!el) return;
+  command('clearAttention', el.dataset.id);
+}, true);
+
+// Recent-messages popover anchored to the status strip. Opens on 🕘 click, closes on backdrop /
+// Esc. Shows the last 50 notices with relative timestamps so the rep can catch what they missed.
+const historyPopover = $('#history-popover');
+const historyBtn = $('#st-history-btn');
+async function openHistory() {
+  const list = await window.fleet.recentNotices();
+  const ul = $('#history-list');
+  if (!Array.isArray(list) || list.length === 0) {
+    ul.replaceChildren(Object.assign(document.createElement('li'), { className: 'empty', textContent: 'No recent messages.' }));
+  } else {
+    const rel = (ms) => {
+      const d = Math.max(0, Math.round((Date.now() - ms) / 1000));
+      if (d < 60) return `${d}s ago`;
+      if (d < 3600) return `${Math.round(d / 60)}m ago`;
+      return `${Math.round(d / 3600)}h ago`;
+    };
+    ul.replaceChildren(...list.map(({ text, at }) => {
+      const li = document.createElement('li');
+      const time = document.createElement('time');
+      time.textContent = rel(at);
+      li.append(time, document.createTextNode(text));
+      return li;
+    }));
+  }
+  historyPopover.hidden = false;
+}
+historyBtn?.addEventListener('click', openHistory);
+
+// Account health map, keyed by profile id. Populated when Profiles → Check All Account Logins
+// runs; the main process broadcasts the new results, we store and re-render the picker.
+const accountHealthByProfile = new Map();
+async function loadInitialHealth() {
+  try {
+    const cache = await window.fleet.accountHealth?.();
+    if (cache?.results) for (const r of cache.results) accountHealthByProfile.set(r.profileId, r);
+  } catch {}
+}
+loadInitialHealth();
+window.fleet.onAccountHealthChanged?.(({ results }) => {
+  accountHealthByProfile.clear();
+  for (const r of results) accountHealthByProfile.set(r.profileId, r);
+  if (!pickerMenu.hidden) renderPickerList();
+});
+$('#history-close')?.addEventListener('click', () => { historyPopover.hidden = true; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !historyPopover.hidden) historyPopover.hidden = true; });
+document.addEventListener('click', (e) => {
+  if (historyPopover.hidden) return;
+  if (historyPopover.contains(e.target) || historyBtn.contains(e.target)) return;
+  historyPopover.hidden = true;
+});
 
 // ⌘P / Ctrl+P — fuzzy jump between open tabs. Searches title + host + profile; Enter switches,
 // Esc closes, Up/Down move the highlight. The one place to land when you're deep in 20 tabs.
@@ -2267,30 +2816,178 @@ window.addEventListener('keydown', (event) => {
   }
 });
 tabsEl.addEventListener('contextmenu', (event) => {
+  const chip = event.target.closest('.group-chip');
+  if (chip) {
+    event.preventDefault();
+    openGroupMenu(chip.dataset.groupId);
+    return;
+  }
   const el = event.target.closest('.tab');
   if (!el) return;
   event.preventDefault();
-  // Pass the current multi-set so main can show bulk entries when right-clicking inside a group.
-  command('tabMenu', el.dataset.id, [...multi]);
+  // Pass the FULL selection (focused tab + multi extras) so bulk entries also appear when the
+  // right-clicked tab is the focused one. Previously bulk entries hid whenever `multi` didn't
+  // already include the right-clicked tab, which hurt the common "shift-click a range, right-
+  // click the focused tab" workflow.
+  command('tabMenu', el.dataset.id, selectedTabIds());
 });
 
-$('#new-tab').addEventListener('click', () => command('newTab'));
+// Group chip menu — rendered in the renderer because it has prompt() for rename, no need for
+// native menus. Options: rename, change color, collapse toggle, ungroup all, close all.
+function openGroupMenu(groupId) {
+  const grp = (state.tabGroups || []).find((g) => g.id === groupId);
+  if (!grp) return;
+  // Minimal popover — reuses the dialog style of the shortcut capture, kept inline for simplicity.
+  const choice = prompt(
+    `Group "${grp.name}" — type an action:\n` +
+    `  rename <new name>\n` +
+    `  color red | orange | amber | yellow | green | teal | cyan | sky | blue | indigo | violet | purple | pink | brown\n` +
+    `  collapse\n` +
+    `  ungroup\n` +
+    `  close`,
+    ''
+  );
+  if (!choice) return;
+  const [verb, ...rest] = choice.trim().split(/\s+/);
+  const arg = rest.join(' ').trim();
+  const COLOR_MAP = {
+    red: '#e03131', orange: '#f76707', amber: '#f59f00', yellow: '#fcc419',
+    green: '#2f9e44', teal: '#0ca678', cyan: '#1098ad', sky: '#339af0',
+    blue: '#1c7ed6', indigo: '#4263eb', violet: '#7048e8', purple: '#ae3ec9',
+    pink: '#d6336c', brown: '#8d5524',
+  };
+  if (verb === 'rename' && arg) command('renameGroup', undefined, { id: grp.id, name: arg });
+  else if (verb === 'color' && COLOR_MAP[arg]) command('setGroupColor', undefined, { id: grp.id, color: COLOR_MAP[arg] });
+  else if (verb === 'collapse') command('toggleGroupCollapse', undefined, grp.id);
+  else if (verb === 'ungroup') {
+    for (const t of state.tabs) if (t.groupId === grp.id) command('ungroupTab', t.id);
+  } else if (verb === 'close') command('closeGroup', undefined, grp.id);
+  else showNotice('Unknown action — type rename, color, collapse, ungroup, or close.');
+}
+
+$('#new-tab').addEventListener('click', (event) => {
+  // Plain click → smart profile assignment picks the next free profile.
+  // Shift+click → always open the picker (useful when you want a fresh unassigned tab).
+  command('newTab', undefined, { smart: !event.shiftKey });
+});
+$('#new-tab').title = 'New tab (Shift+click: pick profile manually)';
 $('#reload').addEventListener('click', () => command(selectedTab()?.loading ? 'stop' : 'reload'));
 for (const button of document.querySelectorAll('[data-cmd]')) {
   button.addEventListener('click', () => command(button.dataset.cmd));
 }
+// 🧹 Clear button — bulk when multi-select active, single-tab hardReset otherwise.
+$('#clear-tab-btn')?.addEventListener('click', () => {
+  const ids = selectedTabIds();
+  if (multi.size > 0 && ids.length > 1) {
+    // Fire the IPC-level bulk command so the backend handles dedupe + reload.
+    command('clearCookiesOn', undefined, ids);
+  } else {
+    command('hardReset');
+  }
+});
 $('#region').addEventListener('change', (event) => command('setRegion', state.selectedId, event.target.value));
 
+// Address bar: autocomplete over recent URLs (persisted to localStorage) + a built-in list of
+// common ticketing destinations. Pressing Enter navigates to the typed text when no suggestion is
+// highlighted, or the highlighted suggestion otherwise. ↑ / ↓ move the highlight.
+const KNOWN_DESTINATIONS = [
+  { url: 'https://www.ticketmaster.com/member', label: 'Ticketmaster — My Member' },
+  { url: 'https://www.ticketmaster.com/myaccount', label: 'Ticketmaster — My Account' },
+  { url: 'https://www.ticketmaster.com/orders', label: 'Ticketmaster — Orders' },
+  { url: 'https://www.ticketmaster.ca/member', label: 'Ticketmaster CA — My Member' },
+  { url: 'https://www.axs.com/mytickets', label: 'AXS — My Tickets' },
+  { url: 'https://seatgeek.com/account', label: 'SeatGeek — Account' },
+  { url: 'https://www.stubhub.com/account/orders', label: 'StubHub — Orders' },
+  { url: 'https://app.seatscouts.com', label: 'Automatiq Sync' },
+];
+const RECENT_URL_KEY = 'fleet.recentUrls';
+let recentUrls = [];
+try { recentUrls = JSON.parse(localStorage.getItem(RECENT_URL_KEY) ?? '[]'); } catch {}
+function rememberURL(url) {
+  if (!/^https?:/i.test(url)) return;
+  recentUrls = [url, ...recentUrls.filter((u) => u !== url)].slice(0, 50);
+  try { localStorage.setItem(RECENT_URL_KEY, JSON.stringify(recentUrls)); } catch {}
+}
+
+const addressSuggest = $('#address-suggest');
+let suggestIndex = -1;
+let suggestItems = [];
+function hideSuggest() { addressSuggest.hidden = true; suggestIndex = -1; }
+function renderSuggest() {
+  const q = address.value.trim().toLowerCase();
+  if (!q) { hideSuggest(); return; }
+  const pool = [...recentUrls.map((u) => ({ url: u, label: u })), ...KNOWN_DESTINATIONS];
+  const seen = new Set();
+  suggestItems = [];
+  for (const item of pool) {
+    if (suggestItems.length >= 8) break;
+    if (seen.has(item.url)) continue;
+    if (!item.url.toLowerCase().includes(q) && !item.label.toLowerCase().includes(q)) continue;
+    seen.add(item.url);
+    suggestItems.push(item);
+  }
+  if (suggestItems.length === 0) { hideSuggest(); return; }
+  addressSuggest.replaceChildren(...suggestItems.map((item, i) => {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'option');
+    li.setAttribute('aria-selected', String(i === suggestIndex));
+    li.dataset.url = item.url;
+    li.innerHTML = `<strong>${escapeHTML(item.label)}</strong><span>${escapeHTML(item.url)}</span>`;
+    return li;
+  }));
+  addressSuggest.hidden = false;
+}
+address.addEventListener('input', () => { suggestIndex = -1; renderSuggest(); });
+address.addEventListener('blur', () => setTimeout(hideSuggest, 150));
+addressSuggest.addEventListener('mousedown', (event) => {
+  // mousedown (not click) because blur fires first and hides the list before click would land.
+  const li = event.target.closest('li');
+  if (!li) return;
+  event.preventDefault();
+  address.value = li.dataset.url;
+  rememberURL(li.dataset.url);
+  hideSuggest();
+  command('navigate', undefined, li.dataset.url);
+  address.blur();
+});
+
+let addressSubmitBroadcast = false;
+address.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && event.shiftKey) addressSubmitBroadcast = true;
+});
 $('#address-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  command('navigate', undefined, address.value);
+  const chosen = suggestIndex >= 0 && suggestItems[suggestIndex] ? suggestItems[suggestIndex].url : address.value;
+  rememberURL(chosen);
+  hideSuggest();
+  if (addressSubmitBroadcast) {
+    // Shift+Enter: send the URL to every selected tab (or just this tab if nothing's multi-selected).
+    const ids = selectedTabIds();
+    for (const id of ids) command('navigate', id, chosen);
+    showNotice(ids.length > 1 ? `Navigated ${ids.length} tabs to ${chosen}` : `Navigated to ${chosen}`);
+    addressSubmitBroadcast = false;
+  } else {
+    command('navigate', undefined, chosen);
+  }
   address.blur();
 });
 address.addEventListener('focus', () => address.select());
 address.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
+    if (!addressSuggest.hidden) { hideSuggest(); event.preventDefault(); return; }
     address.value = selectedTab()?.url ?? '';
     address.blur();
+    return;
+  }
+  if (addressSuggest.hidden || suggestItems.length === 0) return;
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    suggestIndex = (suggestIndex + 1) % suggestItems.length;
+    renderSuggest();
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    suggestIndex = (suggestIndex - 1 + suggestItems.length) % suggestItems.length;
+    renderSuggest();
   }
 });
 
@@ -2306,6 +3003,9 @@ function reportInsets() {
 new ResizeObserver(reportInsets).observe($('#chrome'));
 
 window.fleet.onState((next) => {
+  // Learn from where the user has actually been: any URL in the current state that isn't already
+  // in the recent list is prepended. Keeps the autocomplete tied to real usage.
+  for (const t of next.tabs ?? []) if (t.url) rememberURL(t.url);
   state = next;
   render();
   if (!$('#group-sheet').hidden && groupDialog.renaming === null) renderGroupDialog();

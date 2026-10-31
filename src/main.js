@@ -27,8 +27,12 @@ const { normalizeConfig, validateConfig, createPool, fetchRemoteProxyList, proxy
 const { checkProxies: checkProxyReputations } = require('./reputation');
 const { createOrderWatcher } = require('./orderWatcher');
 const { createOrderStatusStore } = require('./orderStatus');
+const { checkAll: checkAllAccounts } = require('./accountHealth');
+const { ACTIONS, DEFAULT_BY_ID, resolveAccelerators } = require('./shortcuts');
 const { buildSeatMatchScript } = require('./seat-match-script');
 const { buildRecorderScript } = require('./recorder-script');
+const { buildReplayerScript } = require('./replayer-script');
+const playbooksStore = require('./playbooks');
 const { withoutSecrets, mergeImported, decodeTextFile, parseProfilesCSV, buildProfile, publicProfile, planAssignments, buildAutofillScript, buildSubmitScript, buildCardDigitsScript, chooseShownCard, profilesToCSV } = require('./profiles');
 const { resolveForTab } = require('./resolvers');
 const { parseSheetURL, csvExportURL, viewURL, isSheetsURL, sheetListURL, parseSheetList } = require('./sheets');
@@ -132,6 +136,11 @@ let insets = { top: 0, right: 0, left: 0 };
 let pool = null;
 let sharedProxy = null;
 let tabs = [];
+// Tab groups: lightweight visual grouping of tabs by { id, name, color, collapsed }. Tabs carry a
+// `groupId` that points here; the renderer draws group members contiguous in the strip, prefixed
+// by a colored chip. Groups are a renderer-side organization concept — no session or proxy change
+// is implied by grouping.
+let groups = []; // { id, name, color, collapsed }
 let selectedId = null;
 let nextSlot = 1;
 
@@ -234,6 +243,11 @@ function orderToEvent(order) {
     highSeat: order.high_seat,
     orderId: order.order_id ?? order.id,
     marketplace: order.marketplace,
+    // Pass through any direct URL Automatiq provided — eventSearchURL prefers it over the TM search
+    // fallback, so orders with real event URLs skip the search detour entirely.
+    event_url: order.event_url ?? null,
+    primary_marketplace_url: order.primary_marketplace_url ?? null,
+    ticket_url: order.ticket_url ?? null,
     profileId: null, // the Search action asks for a profile; auto-open leaves it unassigned on purpose
   };
 }
@@ -616,9 +630,18 @@ function nextAccountProxy(profile, current, region) {
   return proxy ? { proxy, kind: 'pinned' } : { error: 'Every proxy in the start-screen pool is already pinned to an account.' };
 }
 
+// Rolling buffer of recent user-facing notices so the status strip's history button can show the
+// last 50. Each entry is { text, at }. Non-blocking: a push can happen before win is ready.
+const recentNotices = [];
 function notify(text) {
-  win?.webContents.send('notice', text);
+  const t = String(text ?? '');
+  if (!t) return;
+  recentNotices.push({ text: t, at: Date.now() });
+  if (recentNotices.length > 50) recentNotices.shift();
+  win?.webContents.send('notice', t);
 }
+function listRecentNotices() { return recentNotices.slice().reverse(); }
+ipcMain.handle('notices:recent', () => listRecentNotices());
 
 /** The profile's session for this run, created on first use with the account's proxy (see above). */
 function ensureProfileSession(profile) {
@@ -682,6 +705,7 @@ function saveSessionState() {
         isolation: config.isolation,
         activeGroup: settings?.activeGroup ?? null,
         savedAt: Date.now(),
+        groups: groups.map((g) => ({ id: g.id, name: g.name, color: g.color, collapsed: g.collapsed })),
         tabs: tabs
           .filter((t) => t.partition !== SHEETS_PARTITION)
           .map((t) => {
@@ -691,6 +715,8 @@ function saveSessionState() {
               profileId: t.profileId || null,
               color: t.color || null,
               note: t.note || '',
+              pinned: Boolean(t.pinned),
+              groupId: t.groupId || null,
             };
           })
           .filter((t) => t.url),
@@ -729,20 +755,40 @@ async function startSession(newConfig) {
   }
   mode = 'browser';
 
-  // Try to restore the previous session when the config shape matches. Mismatched isolation /
-  // group would mean the restored tabs end up in the wrong account scope, so we skip and fall
-  // back to the fresh N-blank-tabs flow.
+  // Check for a previous session, but ASK the user before restoring. Auto-restore surprised
+  // users with 20 old tabs they didn't want — now it's always a conscious choice. Mismatched
+  // isolation / group skips the prompt entirely (the saved tabs wouldn't make sense in the new
+  // scope); the saved file is kept until the user explicitly starts fresh.
   const saved = loadSessionState();
-  const canRestore = saved
+  const matches = saved
     && saved.tabs.length > 0
     && saved.isolation === config.isolation
     && saved.activeGroup === (settings?.activeGroup ?? null);
-  if (canRestore) {
+  let restore = false;
+  if (matches && win) {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: [`Restore ${saved.tabs.length} tabs`, 'Start fresh'],
+      defaultId: 0,
+      cancelId: 1,
+      message: `Restore ${saved.tabs.length} tab${saved.tabs.length === 1 ? '' : 's'} from last session?`,
+      detail: 'Your previous tabs, profiles, colors, notes, groups and pinned state will be reopened.',
+    });
+    restore = response === 0;
+    if (!restore) clearSessionState();
+  }
+
+  if (restore) {
+    groups = Array.isArray(saved.groups) ? saved.groups.map((g) => ({
+      id: g.id, name: g.name || 'Group', color: g.color || TAB_GROUP_COLORS[0], collapsed: Boolean(g.collapsed),
+    })) : [];
     for (let i = 0; i < saved.tabs.length; i++) {
       const row = saved.tabs[i];
       const tab = createTab({ url: row.url, profileId: row.profileId, select: i === 0 });
       if (row.color) tab.color = row.color;
       if (row.note) setNote(tab, row.note);
+      if (row.pinned) tab.pinned = true;
+      if (row.groupId && groups.some((g) => g.id === row.groupId)) tab.groupId = row.groupId;
     }
     notify(`Restored ${saved.tabs.length} tab${saved.tabs.length === 1 ? '' : 's'} from last session.`);
   } else {
@@ -755,6 +801,7 @@ async function startSession(newConfig) {
 function endSession() {
   for (const tab of tabs) destroyTab(tab);
   tabs = [];
+  groups = [];
   profileSessions.clear();
   selectedId = null;
   mode = 'launcher';
@@ -861,31 +908,161 @@ function startRecording() {
   sendState();
 }
 
-async function stopRecording() {
+async function stopRecording({ name = null, orderContext = null } = {}) {
   if (!recordingActive) return null;
   recordingActive = false;
-  const payload = {
-    startedAt: new Date(recordingStartedAt).toISOString(),
-    stoppedAt: new Date().toISOString(),
-    actionCount: recordedActions.length,
-    actions: recordedActions,
-  };
-  const file = dataPath(`recording-${recordingStartedAt}.json`);
-  try {
-    fs.writeFileSync(file, JSON.stringify(payload, null, 2));
-    notify(`Recorded ${payload.actionCount} actions → ${file}`);
-  } catch (error) {
-    notify(`Recording stopped but could not be saved: ${error.message}`);
+  const actions = autoBindActions(recordedActions, orderContext);
+  // Save as a playbook if a name was provided; otherwise still drop a raw recording file so no
+  // work is lost. The renderer gives the user a chance to name it when they stop.
+  const result = { count: actions.length };
+  if (name && name.trim()) {
+    try {
+      const hostPatterns = Array.from(new Set(actions.map((a) => {
+        try { return new URL(a.url || '').hostname; } catch { return null; }
+      }).filter(Boolean))).slice(0, 5);
+      const pb = playbooksStore.savePlaybook(app.getPath('userData'), {
+        name: name.trim(), hostPatterns, actions,
+      });
+      result.playbook = pb;
+      notify(`Saved playbook "${pb.name}" (${pb.actions.length} actions).`);
+    } catch (error) {
+      notify(`Could not save playbook: ${error.message}`);
+    }
+  } else {
+    const file = dataPath(`recording-${recordingStartedAt}.json`);
+    try {
+      fs.writeFileSync(file, JSON.stringify({ actions }, null, 2));
+      result.file = file;
+      notify(`Recorded ${actions.length} actions → ${file}`);
+    } catch (error) {
+      notify(`Recording stopped but could not be saved: ${error.message}`);
+    }
   }
   recordedActions = [];
   sendState();
-  return { file, count: payload.actionCount };
+  return result;
+}
+
+// Pulls variable-binding hints from the order the user had in focus when recording started.
+function autoBindActions(actions, orderContext) {
+  if (!orderContext) return actions;
+  return playbooksStore.autoBindVariables(actions, { order: orderContext });
 }
 
 function injectRecorderInto(tab) {
   const contents = tab?.view?.webContents;
   if (!contents || contents.isDestroyed()) return;
   contents.executeJavaScript(buildRecorderScript(), true).catch(() => {});
+}
+
+// ---------- Playbook replay ----------
+//
+// Running a playbook against a tab injects the replayer script. Each action can carry a
+// `varBinding` that we substitute from the live order before injection. The script posts
+// progress back via window.postMessage, which the stealth preload already forwards to the main
+// process (same bridge the recorder uses, but tagged with __fleetReplay instead).
+//
+// Mid-replay the page may navigate; the script bails cleanly and we re-inject on did-navigate so
+// multi-page flows (login → event → checkout) can carry through.
+
+const replayRuns = new Map(); // runId → { tabId, playbookId, order, startedAt, log: [] }
+
+// Opens a NEW tab at the given URL and runs the playbook against it once the page settles.
+// Useful when the user wants to replay against an arbitrary event URL instead of whatever is on
+// the currently selected tab.
+async function runPlaybookOnURL(url, playbookId, orderContext = null, { profileId = null } = {}) {
+  if (!url || !/^https?:/i.test(url)) return { error: 'Give a valid https:// URL.' };
+  const playbook = playbooksStore.readPlaybook(app.getPath('userData'), playbookId);
+  if (!playbook) return { error: 'Playbook not found.' };
+  const tab = createTab({ url, select: true, profileId });
+  // Wait for the tab to finish loading, then kick off the replay. 10s cap so a stuck proxy
+  // doesn't hang the UI forever — the replay still runs after that, just maybe on a half-loaded
+  // page which the user can then abort.
+  const contents = tab.view.webContents;
+  await new Promise((resolve) => {
+    const done = () => { contents.off('did-stop-loading', done); resolve(); };
+    contents.on('did-stop-loading', done);
+    setTimeout(done, 10_000);
+  });
+  return runPlaybookOnTab(tab.id, playbookId, orderContext);
+}
+
+/** Walks `actions`, substituting variables against the live order. Seat-click actions with a
+ * [lowSeat..highSeat] range get expanded into one click per seat so the full group is carted. */
+function materializeActions(actions, order) {
+  if (!order) return (actions || []).map((a) => playbooksStore.substitute(a, {}));
+  const low = Number(order.lowSeat ?? order.low_seat) || null;
+  const high = Number(order.highSeat ?? order.high_seat) || low;
+  const seatRange = low && high && high >= low
+    ? Array.from({ length: high - low + 1 }, (_, i) => low + i)
+    : (low ? [low] : null);
+  const out = [];
+  for (const action of actions || []) {
+    if (action.varBinding?.field === 'seat' && seatRange && seatRange.length > 1 && action.type === 'click') {
+      // One click per seat in the range. The target seat's data-seat-name attribute is the only
+      // thing that differs between clicks; the rest of the describe() payload stays the same so
+      // the replayer finds the right <circle> element each time.
+      for (const seatNumber of seatRange) {
+        const clone = JSON.parse(JSON.stringify(action));
+        if (clone.el?.attrs) {
+          if (clone.el.attrs['data-seat-name']) clone.el.attrs['data-seat-name'] = String(seatNumber);
+          if (clone.el.attrs['data-seat']) clone.el.attrs['data-seat'] = String(seatNumber);
+        }
+        out.push(clone);
+      }
+    } else {
+      out.push(playbooksStore.substitute(action, order));
+    }
+  }
+  return out;
+}
+
+async function runPlaybookOnTab(tabId, playbookId, orderContext = null) {
+  const tab = tabs.find((t) => t.id === tabId);
+  if (!tab) return { error: 'Tab not found.' };
+  const playbook = playbooksStore.readPlaybook(app.getPath('userData'), playbookId);
+  if (!playbook) return { error: 'Playbook not found.' };
+  const runId = randomUUID();
+  const actions = materializeActions(playbook.actions || [], orderContext || {});
+  replayRuns.set(runId, { tabId, playbookId, orderContext, startedAt: Date.now(), log: [], tab });
+  tab.playbookRunId = runId;
+  const script = buildReplayerScript(actions, { runId, stepDelayMs: 900 });
+  try {
+    await tab.view.webContents.executeJavaScript(script, true);
+    return { ok: true, runId };
+  } catch (error) {
+    replayRuns.delete(runId);
+    return { error: error?.message || 'Replay injection failed.' };
+  }
+}
+
+// When a page the replayer told the browser to navigate finishes loading, resume the playbook on
+// the remaining steps starting from where we left off. We detect "where we left off" by looking at
+// the last `log` entry's step index and continuing from there.
+function maybeResumeReplayer(tab) {
+  if (!tab.playbookRunId) return;
+  const run = replayRuns.get(tab.playbookRunId);
+  if (!run) return;
+  const lastStep = run.log.length ? run.log[run.log.length - 1] : null;
+  if (lastStep && (lastStep.status === 'done' || lastStep.status === 'cancelled' || lastStep.status === 'error' || lastStep.status === 'miss')) return;
+  const playbook = playbooksStore.readPlaybook(app.getPath('userData'), run.playbookId);
+  if (!playbook) return;
+  const resumeIndex = lastStep ? lastStep.step + 1 : 0;
+  const remaining = materializeActions((playbook.actions || []).slice(resumeIndex), run.orderContext || {});
+  if (remaining.length === 0) return;
+  const script = buildReplayerScript(remaining, { runId: run.playbookRunId ?? tab.playbookRunId, stepDelayMs: 900 });
+  tab.view.webContents.executeJavaScript(script, true).catch(() => {});
+}
+
+function stopPlaybook(runId) {
+  const run = replayRuns.get(runId);
+  if (!run) return;
+  replayRuns.delete(runId);
+  const tab = tabs.find((t) => t.id === run.tabId);
+  if (tab?.view?.webContents && !tab.view.webContents.isDestroyed()) {
+    tab.view.webContents.executeJavaScript('window.__fleetReplayRun = null;').catch(() => {});
+  }
+  if (tab) tab.playbookRunId = null;
 }
 
 ipcMain.on('record:action', (event, action) => {
@@ -903,6 +1080,60 @@ ipcMain.on('record:action', (event, action) => {
   // Tick the UI counter every 5 actions so the Record button shows live progress.
   if (recordedActions.length % 5 === 0) sendState();
 });
+
+ipcMain.on('replay:progress', (event, info) => {
+  const run = replayRuns.get(info.runId);
+  if (!run) return;
+  run.log.push(info);
+  if (info.status === 'done' || info.status === 'cancelled') {
+    replayRuns.delete(info.runId);
+    const tab = tabs.find((t) => t.id === run.tabId);
+    if (tab) tab.playbookRunId = null;
+    notify(`Playbook ${info.status === 'done' ? 'completed' : 'stopped'} on tab ${tab?.slot ?? '?'}.`);
+  } else if (info.status === 'miss' || info.status === 'error') {
+    notify(`Playbook step ${info.step}: ${info.status} — ${info.detail || ''}`);
+  }
+  // Forward to the renderer for a running progress UI.
+  win?.webContents.send('playbook-progress', info);
+});
+
+// Per-tab URL watcher. The user sets a substring or /regex/ via the context menu; whenever this
+// tab navigates to a matching URL, a system notification fires + the tab's "attention" flag flips
+// so the strip shows a dot. One-shot per set — resets after firing to avoid spam.
+function compileWatch(pattern) {
+  if (!pattern) return null;
+  const match = /^\/(.+)\/([gimsy]*)$/.exec(pattern);
+  try {
+    return match ? new RegExp(match[1], match[2]) : new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  } catch { return null; }
+}
+function checkWatchPattern(tab, url) {
+  if (!tab.watchPattern) return;
+  const re = compileWatch(tab.watchPattern);
+  if (!re || !re.test(String(url ?? ''))) return;
+  tab.attention = true;
+  tab.watchPattern = null; // one-shot
+  if (Notification.isSupported()) {
+    const n = new Notification({
+      title: `Tab ${tab.slot}: watched URL matched`,
+      body: url,
+    });
+    n.on('click', () => { if (win && tabs.includes(tab)) { win.show(); selectTab(tab.id); } });
+    n.show();
+  }
+  notify(`Tab ${tab.slot}: watched URL matched — ${url}`);
+  sendState();
+}
+
+async function promptWatchPattern(tab) {
+  if (!win) return;
+  const current = tab.watchPattern || '';
+  const buttons = current
+    ? ['Save', 'Clear watch', 'Cancel']
+    : ['Save', 'Cancel'];
+  // Electron doesn't ship a prompt dialog; renderer owns the UI prompt. Delegate via IPC.
+  win.webContents.send('prompt-watch', { tabId: tab.id, current });
+}
 
 function maybeInjectSeatMatcher(tab, url) {
   const payload = tabOrderPayload.get(tab);
@@ -937,6 +1168,49 @@ function createView(tab) {
   // Default-mute every new tab; only the currently selected tab plays audio. The user can flip
   // this per-tab from the context menu.
   try { contents.setAudioMuted(true); } catch {}
+  // Page right-click context menu. Chromium leaves this to the embedder, so wire the standard
+  // Copy / Paste / Cut / Select All / Undo / Redo / Reload / Open-link items ourselves. Without
+  // this the page shows no menu at all when the user right-clicks text, which breaks mouse-driven
+  // copy/paste on card numbers etc.
+  contents.on('context-menu', (event, params) => {
+    const t = [];
+    if (params.linkURL) t.push(
+      { label: 'Open Link in New Tab', click: () => createTab({ url: params.linkURL, opener: tab, after: tab }) },
+      { label: 'Copy Link Address', click: () => clipboard.writeText(params.linkURL) },
+      { type: 'separator' },
+    );
+    if (params.hasImageContents) t.push(
+      { label: 'Copy Image', click: () => contents.copyImageAt(params.x, params.y) },
+      { label: 'Save Image As…', click: () => contents.downloadURL(params.srcURL) },
+      { type: 'separator' },
+    );
+    if (params.isEditable) {
+      t.push(
+        { role: 'undo', enabled: params.editFlags.canUndo },
+        { role: 'redo', enabled: params.editFlags.canRedo },
+        { type: 'separator' },
+        { role: 'cut', enabled: params.editFlags.canCut },
+        { role: 'copy', enabled: params.editFlags.canCopy },
+        { role: 'paste', enabled: params.editFlags.canPaste },
+        { role: 'selectAll', enabled: params.editFlags.canSelectAll },
+      );
+    } else if (params.selectionText && params.selectionText.trim()) {
+      t.push(
+        { role: 'copy' },
+        { type: 'separator' },
+        { label: `Search "${params.selectionText.slice(0, 30)}" on Google`,
+          click: () => createTab({ url: `https://www.google.com/search?q=${encodeURIComponent(params.selectionText)}`, opener: tab, after: tab }) },
+      );
+    } else {
+      t.push(
+        { label: 'Back', enabled: contents.navigationHistory.canGoBack(), click: () => contents.navigationHistory.goBack() },
+        { label: 'Forward', enabled: contents.navigationHistory.canGoForward(), click: () => contents.navigationHistory.goForward() },
+        { label: 'Reload', click: () => contents.reload() },
+      );
+    }
+    if (t.length === 0) return;
+    Menu.buildFromTemplate(t).popup({ window: win });
+  });
   // Burn swaps a tab's view; events still arriving from the old one must not touch the tab.
   const current = () => tab.view === view;
   const update = () => current() && sendState();
@@ -967,11 +1241,14 @@ function createView(tab) {
     tab.pendingURL = null;
     maybeInjectSeatMatcher(tab, url);
     if (recordingActive) injectRecorderInto(tab);
+    checkWatchPattern(tab, url);
+    maybeResumeReplayer(tab);
   });
   contents.on('did-navigate-in-page', (_event, url) => {
     if (!current()) return;
     maybeInjectSeatMatcher(tab, url);
     if (recordingActive) injectRecorderInto(tab);
+    checkWatchPattern(tab, url);
   });
   contents.on('did-start-loading', () => {
     if (!current()) return;
@@ -982,8 +1259,39 @@ function createView(tab) {
     if (current() && isMainFrame) releaseLoadSlot(tab);
     if (!current() || !isMainFrame || code === -3) return; // -3: aborted (navigated away / download)
     tab.error = `${description || 'Load failed'} (${code})`;
+    // Transient network errors (DNS fail, TCP reset, timeout, ERR_PROXY_CONNECTION_FAILED) often
+    // succeed on a retry — the proxy pool rotation or a flaky upstream fix themselves after a
+    // beat. Retry up to 2 times with escalating backoff, then stop and surface the error.
+    const RETRYABLE = new Set([
+      -101, // ERR_CONNECTION_RESET
+      -105, // ERR_NAME_NOT_RESOLVED
+      -106, // ERR_INTERNET_DISCONNECTED
+      -118, // ERR_CONNECTION_TIMED_OUT
+      -130, // ERR_PROXY_CONNECTION_FAILED
+      -324, // ERR_EMPTY_RESPONSE
+      -501, // ERR_INSECURE_RESPONSE
+    ]);
+    // Any failure that smells like the proxy itself cools that proxy down so the next tab (or the
+    // same tab's auto-reload) doesn't pick the same bad IP. 5-minute cooldown by default.
+    const PROXY_FAILURE_CODES = new Set([-130, -101, -118, -324, -111]);
+    if (tab.proxy && pool?.markBad && PROXY_FAILURE_CODES.has(code)) {
+      pool.markBad(tab.proxy, `net code ${code}`);
+    }
+    tab.autoReloadCount = tab.autoReloadCount ?? 0;
+    if (RETRYABLE.has(code) && tab.autoReloadCount < 2) {
+      tab.autoReloadCount++;
+      const delay = 1500 * tab.autoReloadCount; // 1.5s, then 3s
+      setTimeout(() => {
+        if (!current() || tab.view.webContents.isDestroyed()) return;
+        tab.error = `Retrying… (attempt ${tab.autoReloadCount})`;
+        sendState();
+        const url = intendedURL(tab);
+        if (url) tab.view.webContents.loadURL(url).catch(() => {});
+      }, delay);
+    }
     sendState();
   });
+  contents.on('did-finish-load', () => { if (current()) tab.autoReloadCount = 0; });
   contents.on('render-process-gone', (_event, details) => {
     if (!current()) return;
     tab.error = `Page stopped (${details.reason}). Reload to try again.`;
@@ -1344,12 +1652,43 @@ function destroyTab(tab) {
   destroyView(tab.view);
 }
 
-function closeTab(tab) {
+// Last-closed stack for Cmd+Shift+T. Captured just before destroyTab runs so we have the url,
+// profile, color, note, and watchPattern. 20-entry bounded.
+const recentlyClosed = [];
+function captureClosedTab(tab) {
+  const url = tab.view?.webContents?.getURL?.() || tab.lastURL || '';
+  if (!url || !/^https?:/i.test(url)) return;
+  recentlyClosed.push({
+    url, profileId: tab.profileId || null, color: tab.color || null,
+    note: tab.note || '', watchPattern: tab.watchPattern || null, at: Date.now(),
+  });
+  if (recentlyClosed.length > 20) recentlyClosed.shift();
+}
+function reopenLastClosedTab() {
+  const entry = recentlyClosed.pop();
+  if (!entry) { notify('No recently closed tabs to reopen.'); return; }
+  const tab = createTab({ url: entry.url, profileId: entry.profileId, select: true });
+  if (entry.color) tab.color = entry.color;
+  if (entry.note) setNote(tab, entry.note);
+  if (entry.watchPattern) tab.watchPattern = entry.watchPattern;
+  sendState();
+}
+
+function closeTab(tab, { force = false } = {}) {
   const index = tabs.indexOf(tab);
   if (index === -1) return;
+  if (tab.pinned && !force) {
+    notify('Unpin this tab first (right-click → Unpin Tab) before closing.');
+    return;
+  }
+  captureClosedTab(tab);
   tabs.splice(index, 1);
   destroyTab(tab);
   releasePartition(tab.partition);
+  // Drop empty groups so stale chips don't linger in the strip.
+  if (tab.groupId && !tabs.some((t) => t.groupId === tab.groupId)) {
+    groups = groups.filter((g) => g.id !== tab.groupId);
+  }
   if (tabs.length === 0) {
     createTab();
     return;
@@ -1489,12 +1828,39 @@ function setProfile(tab, profileId, { force = false, url = null } = {}) {
   return moveTabToSession(tab, { partition, proxy, region: tab.region, ready: applyProxy(session.fromPartition(partition), proxy) }, url);
 }
 
-/** Logs a profile out everywhere: clears its session's cookies and storage and reloads its tabs. */
+/** Bulk-safe cookie wipe: for the given tab ids, dedupe by partition, wipe each distinct session
+ * once, then force an immediate reload on every selected tab so background tabs don't display
+ * stale "logged in" DOM. Used by the toolbar's Clear button and the right-click bulk entry. */
+async function clearCookiesOnTabs(tabIds) {
+  if (!Array.isArray(tabIds) || tabIds.length === 0) return 0;
+  const targets = tabIds.map((id) => tabs.find((t) => t.id === id)).filter(Boolean);
+  if (targets.length === 0) return 0;
+  const seenPartition = new Set();
+  for (const t of targets) {
+    if (seenPartition.has(t.partition)) continue;
+    seenPartition.add(t.partition);
+    try { stopTab(t); await wipeSession(t.view.webContents.session); } catch {}
+  }
+  for (const t of targets) {
+    const contents = t.view?.webContents;
+    if (!contents || contents.isDestroyed()) continue;
+    try {
+      const url = contents.getURL() || t.lastURL;
+      if (url) contents.loadURL(url).catch(() => {});
+    } catch {}
+  }
+  sendState();
+  return targets.length;
+}
+
+/** Wipes a tab's session cookies/storage and reloads. If the tab belongs to a profile every other
+ * tab under that same profile also reloads (they share the session). Works on standalone tabs too
+ * so bulk "clear cookies" is useful even for non-profile tabs. */
 async function clearProfileCookies(tab) {
-  if (!profileSessionFor(tab.partition)) return;
+  if (!tabs.includes(tab)) return;
   const sharing = tabs.filter((t) => t.partition === tab.partition);
   for (const t of sharing) stopTab(t);
-  await wipeSession(tab.view.webContents.session);
+  try { await wipeSession(tab.view.webContents.session); } catch {}
   for (const t of sharing) reloadTab(t);
   sendState();
 }
@@ -1549,27 +1915,29 @@ async function confirmHardReset() {
 }
 
 /**
- * Per-tab reset — the toolbar's "Clear all" now does only this tab. Flow:
- *   1. Wipe the session's cookies, storage, cache, service workers (every site this tab visited).
- *   2. Burn its IP from the pool (profile-attached tabs re-pin a new pool proxy on the same session;
- *      standalone tabs get a brand-new partition on the next proxy, same as burnIP).
- *   3. Reload the current page.
+ * Per-tab reset — the toolbar's "Clear tab" button. Flow:
+ *   1. Wipe the session's cookies, storage, cache, service workers.
+ *   2. Burn its IP from the pool.
+ *   3. Navigate to the profile's home URL (or the global start URL when no profile) — never back to
+ *      the page the user was on, since the point of "Clear" is to start fresh.
  */
 async function clearThisTab(tab) {
   if (!tabs.includes(tab)) return;
   const contents = tab.view?.webContents;
   if (!contents || contents.isDestroyed()) return;
-  const url = intendedURL(tab) || findProfile(tab.profileId)?.url || config.startURL;
+  const home = findProfile(tab.profileId)?.url || config.startURL || 'about:blank';
   stopTab(tab);
   try { await wipeSession(contents.session); } catch {}
-  // Rotate IP without the full session-move dance that hardReset used for every account.
   if (perTabProxies()) {
+    // burnIP navigates to the intended URL; set it to the home first so burn lands there, not on
+    // the page we're clearing away from.
+    tab.pendingURL = home;
+    tab.lastURL = home;
     try { await burnIP(tab); } catch {}
   }
-  // burnIP already loads the intended URL; only reload if we didn't go through it.
-  if (!perTabProxies()) {
-    tab.view.webContents.loadURL(url).catch(() => {});
-  }
+  // Always navigate to home at the end — covers the non-perTab-proxies case and reasserts if
+  // burnIP's load raced the wipe.
+  tab.view.webContents.loadURL(home).catch(() => {});
 }
 
 /** Spreads the chosen profiles over all tabs in order; `repeat` cycles them until every tab has one. */
@@ -2030,6 +2398,17 @@ function loginURLForTab(tab) {
   return null;
 }
 
+/** Navigate a tab to its sign-in page without filling anything — used by the bulk "Open sign-in"
+ * action so a rep can land N accounts on the login screen and manually confirm something before
+ * firing Cmd+1 (auto-login) across them. */
+function openSignInPage(tab) {
+  if (!tabs.includes(tab)) return;
+  const profile = findProfile(tab.profileId);
+  const target = profile?.url || loginURLForTab(tab);
+  if (!target) { notify(`Tab ${tab.slot}: no sign-in URL (set Homepage URL on the profile).`); return; }
+  loadInTab(tab, target);
+}
+
 async function autoLogin(tab, cardIndex = 0) {
   const profile = findProfile(tab.profileId);
   if (!profile) return { error: 'Assign a profile to this tab first.' };
@@ -2038,7 +2417,19 @@ async function autoLogin(tab, cardIndex = 0) {
   //   2. Known login URL for the tab's current host — covers Ticketmaster /search → /member.
   //   3. Fall back to running autofill in-place on whatever is already loaded.
   const target = profile.url || loginURLForTab(tab);
-  if (target) loadInTab(tab, target);
+  // Bypass the load scheduler. The scheduler queues background tabs so that a 20-tab session
+  // doesn't swamp bandwidth on open, but when the user explicitly fires auto-login on N selected
+  // tabs they expect ALL of them to start loading right now, not sit in a queue while autofill
+  // runs on the previous page (which was the stale-page / wrong-site problem on bulk Cmd+1).
+  if (target) {
+    tab.lastURL = target;
+    tab.error = null;
+    forgetLoads(tab); // drop any queued-but-not-started load for this tab
+    try {
+      const contents = tab.view?.webContents;
+      if (contents && !contents.isDestroyed()) await contents.loadURL(target).catch(() => {});
+    } catch {}
+  }
 
   const steps = [];
   for (let step = 0; step < 5; step++) {
@@ -2220,6 +2611,100 @@ function cycleTab(offset) {
   selectTab(tabs[(index + offset + tabs.length) % tabs.length].id);
 }
 
+// ---------- Tab groups ----------
+
+const TAB_GROUP_COLORS = [
+  '#e03131','#f76707','#f59f00','#2f9e44','#0ca678','#1098ad','#339af0',
+  '#1c7ed6','#4263eb','#7048e8','#ae3ec9','#d6336c','#f06595','#8d5524',
+];
+
+function findGroup(id) { return groups.find((g) => g.id === id) ?? null; }
+
+/** Puts the group members contiguous in the tabs array (keeps the group block ordering stable),
+ * so grouping doesn't shuffle every tab. Members already contiguous stay put. */
+function compactGroupBlock(groupId, insertAfterTabId = null) {
+  const members = tabs.filter((t) => t.groupId === groupId);
+  if (members.length === 0) return;
+  // Remove members, then re-insert them at the chosen anchor.
+  const others = tabs.filter((t) => t.groupId !== groupId);
+  let anchor = insertAfterTabId
+    ? others.findIndex((t) => t.id === insertAfterTabId)
+    : others.findIndex((t) => t.pinned && !t.groupId) + others.filter((t) => t.pinned).length;
+  if (anchor < 0) anchor = others.length - 1;
+  const result = [...others.slice(0, anchor + 1), ...members, ...others.slice(anchor + 1)];
+  tabs = result;
+}
+
+function createGroup({ tabIds = [], name = 'Group', color = null } = {}) {
+  const id = randomUUID();
+  const g = { id, name: String(name || 'Group').slice(0, 40), color: color || TAB_GROUP_COLORS[groups.length % TAB_GROUP_COLORS.length], collapsed: false };
+  groups.push(g);
+  for (const tid of tabIds) {
+    const tab = tabs.find((t) => t.id === tid);
+    if (tab) tab.groupId = id;
+  }
+  compactGroupBlock(id, tabIds[0] ?? null);
+  sendState();
+  return g;
+}
+
+function renameGroup(id, name) {
+  const g = findGroup(id);
+  if (!g) return;
+  g.name = String(name || '').slice(0, 40);
+  sendState();
+}
+function setGroupColor(id, color) {
+  const g = findGroup(id);
+  if (!g || !color) return;
+  g.color = color;
+  sendState();
+}
+function toggleGroupCollapse(id) {
+  const g = findGroup(id);
+  if (!g) return;
+  g.collapsed = !g.collapsed;
+  sendState();
+}
+function ungroupTab(tabId) {
+  const tab = tabs.find((t) => t.id === tabId);
+  if (!tab || !tab.groupId) return;
+  const groupId = tab.groupId;
+  tab.groupId = null;
+  // If the group is now empty, drop it. If not, keep it and compact.
+  if (!tabs.some((t) => t.groupId === groupId)) {
+    groups = groups.filter((g) => g.id !== groupId);
+  }
+  sendState();
+}
+function addTabsToGroup(groupId, tabIds) {
+  if (!findGroup(groupId)) return;
+  for (const tid of tabIds) {
+    const tab = tabs.find((t) => t.id === tid);
+    if (tab) tab.groupId = groupId;
+  }
+  compactGroupBlock(groupId);
+  sendState();
+}
+async function closeGroup(id) {
+  const g = findGroup(id);
+  if (!g) return;
+  const victims = tabs.filter((t) => t.groupId === id);
+  if (victims.length > 3 && win) {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: [`Close ${victims.length} tabs`, 'Cancel'],
+      defaultId: 1, cancelId: 1,
+      message: `Close ${victims.length} tabs in "${g.name}"?`,
+      detail: 'Pinned tabs are kept. This cannot be undone.',
+    });
+    if (response !== 0) return;
+  }
+  for (const tab of victims) if (!tab.pinned) closeTab(tab, { force: false });
+  groups = groups.filter((grp) => grp.id !== id);
+  sendState();
+}
+
 /**
  * Reorders the strip by moving one tab to a new index. The target index is interpreted BEFORE the
  * tab is pulled out, so passing the current index is a no-op and passing length puts it at the end.
@@ -2238,12 +2723,43 @@ function moveTab(id, toIndex) {
   sendState();
 }
 
-/** Closes a list of tabs. Returns the count actually closed. */
-function closeTabs(ids) {
+/** Closes a list of tabs. Pinned tabs are skipped (users expect pin to protect against bulk close).
+ * Prompts a confirmation when more than 3 tabs would close, since Ctrl+A → × is easy to trigger by
+ * accident on a 20-tab session and losing that much state would be hostile. Returns the count. */
+async function closeTabs(ids) {
   if (!Array.isArray(ids)) return 0;
-  const targets = ids.map((id) => tabs.find((t) => t.id === id)).filter(Boolean);
+  const targets = ids.map((id) => tabs.find((t) => t.id === id)).filter((t) => t && !t.pinned);
+  if (targets.length === 0) return 0;
+  if (targets.length > 3 && win) {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: [`Close ${targets.length} tabs`, 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Close ${targets.length} tabs?`,
+      detail: 'Pinned tabs are kept. This cannot be undone.',
+    });
+    if (response !== 0) return 0;
+  }
   for (const tab of targets) closeTab(tab);
   return targets.length;
+}
+
+function togglePinTab(tab) {
+  if (!tabs.includes(tab)) return;
+  tab.pinned = !tab.pinned;
+  // Pinned tabs move to the start of the strip so they're always visible even in a wide session.
+  if (tab.pinned) {
+    const from = tabs.indexOf(tab);
+    if (from !== -1) {
+      tabs.splice(from, 1);
+      // Insert after the last existing pinned tab, so pins stack in the order they were pinned.
+      let insertAt = 0;
+      while (insertAt < tabs.length && tabs[insertAt].pinned) insertAt++;
+      tabs.splice(insertAt, 0, tab);
+    }
+  }
+  sendState();
 }
 
 /** Only the selected tab's view is attached; background tabs keep running detached. */
@@ -2273,6 +2789,38 @@ function layout() {
   });
 }
 
+/**
+ * Writes the currently-open tabs to a CSV: slot, title, URL, profile, proxy, note, order id.
+ * Useful as a shift handover or an audit of what the rep was working on.
+ */
+async function exportTabsCSV() {
+  if (!win) return;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath: path.join(app.getPath('documents'), `TabFleet session ${stamp}.csv`),
+    filters: [{ name: 'CSV', extensions: ['csv'] }],
+  });
+  if (canceled || !filePath) return;
+  const esc = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const header = ['Slot', 'Title', 'URL', 'Profile', 'Proxy', 'Order', 'Note'];
+  const rows = tabs
+    .filter((t) => t.partition !== SHEETS_PARTITION)
+    .map((t) => {
+      const url = t.view?.webContents?.getURL?.() || t.lastURL || '';
+      const title = t.view?.webContents?.getTitle?.() || '';
+      const profileName = findProfile(t.profileId)?.profile || '';
+      const payload = tabOrderPayload.get(t);
+      const orderId = payload?.order_id ?? payload?.orderId ?? '';
+      return [t.slot, title, url, profileName, proxyLabel(t.proxy) || 'Direct', orderId, (t.note || '').slice(0, 500)];
+    });
+  const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\n');
+  await fs.promises.writeFile(filePath, csv);
+  notify(`Exported ${rows.length} tab${rows.length === 1 ? '' : 's'} → ${filePath}`);
+}
+
 async function screenshot(tab) {
   const image = await tab.view.webContents.capturePage();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -2289,6 +2837,7 @@ function showMoreMenu() {
     { label: 'Clear This Tab & New IP…', click: () => confirmHardReset() },
     { label: 'Reload Every Tab', click: () => tabs.forEach(reloadTab) },
     { label: 'Save a Screenshot', enabled: Boolean(selectedTab()), click: () => runCommand('screenshot') },
+    { label: 'Export Open Tabs to CSV…', enabled: tabs.length > 0, click: () => exportTabsCSV() },
     { type: 'separator' },
     { label: 'Close All Tabs and Start Over', click: () => endSession() },
   ]).popup({ window: win });
@@ -2309,8 +2858,14 @@ function showTabMenu(tab, multi) {
   const bulkTabs = bulkIds ? bulkIds.map((id) => tabs.find((t) => t.id === id)).filter(Boolean) : null;
   const bulkSection = bulkTabs && bulkTabs.length > 1 ? [
     { label: `${bulkTabs.length} tabs selected`, enabled: false },
+    { label: `Group ${bulkTabs.length} tabs…`, click: () => createGroup({ tabIds: bulkIds, name: 'Group' }) },
+    { label: `Clear cookies on ${bulkTabs.length}`, click: async () => {
+      const n = await clearCookiesOnTabs(bulkIds);
+      notify(`Cleared cookies on ${n} tab${n === 1 ? '' : 's'}.`);
+    } },
     { label: `Burn IP on ${bulkTabs.length}`, enabled: can, click: () => bulkTabs.forEach((t) => burnIP(t)) },
     { label: `Clear & New IP on ${bulkTabs.length}`, click: () => bulkTabs.forEach((t) => clearThisTab(t)) },
+    { label: `Open sign-in page on ${bulkTabs.length}`, click: () => bulkTabs.forEach((t) => openSignInPage(t)) },
     { label: `Auto-Login on ${bulkTabs.length}`, enabled: bulkTabs.every((t) => t.profileId), click: () => bulkTabs.forEach((t) => autoLogin(t)) },
     { label: `Go Home on ${bulkTabs.length}`, click: () => bulkTabs.forEach((t) => runCommand('home', t.id)) },
     { label: `Close ${bulkTabs.length} tabs`, click: () => closeTabs(bulkIds) },
@@ -2318,6 +2873,20 @@ function showTabMenu(tab, multi) {
   ] : [];
   Menu.buildFromTemplate([
     ...bulkSection,
+    { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', click: () => togglePinTab(tab) },
+    { label: tab.watchPattern ? `Watching: ${tab.watchPattern.slice(0, 40)} — change…` : 'Watch for URL…', click: () => promptWatchPattern(tab) },
+    {
+      label: 'Group',
+      submenu: [
+        { label: 'New group with this tab', click: () => createGroup({ tabIds: [tab.id], name: 'Group' }) },
+        ...groups.map((g) => ({
+          label: g.name, type: 'radio', checked: tab.groupId === g.id,
+          click: () => addTabsToGroup(g.id, [tab.id]),
+        })),
+        { type: 'separator' },
+        { label: 'Remove from group', enabled: Boolean(tab.groupId), click: () => ungroupTab(tab.id) },
+      ],
+    },
     { label: 'Duplicate Tab', click: () => duplicateTab(tab) },
     {
       label: hasActiveGroup() ? `Set Profile (${groupName(settings.activeGroup)})` : 'Set Profile',
@@ -2357,7 +2926,7 @@ function showTabMenu(tab, multi) {
       ],
     },
     { type: 'separator' },
-    { label: 'Close Tab', click: () => closeTab(tab) },
+    { label: 'Close Tab', click: () => closeTab(tab, { force: true }) },
   ]).popup({ window: win });
 }
 
@@ -2392,6 +2961,7 @@ function flushState() {
 }
 
 function snapshot() {
+  const poolStats = pool?.coolStats?.() ?? null;
   return {
     mode,
     groups: groupList(),
@@ -2400,6 +2970,9 @@ function snapshot() {
     recording: recordingActive,
     recordedCount: recordedActions.length,
     perTabProxies: perTabProxies(),
+    poolStats, // { total, cool, entries } for list pools; null otherwise
+    tabGroups: groups.map((g) => ({ id: g.id, name: g.name, color: g.color, collapsed: g.collapsed })),
+
     regions: pool?.regions ?? [],
     selectedId,
     tabs: tabs.map((tab) => {
@@ -2438,6 +3011,14 @@ function snapshot() {
         profileName: profile?.profile ?? null,
         favicon: tab.favicon ?? null,
         muted: contents.isAudioMuted?.() ?? false,
+        pinned: Boolean(tab.pinned),
+        attention: Boolean(tab.attention),
+        watchPattern: tab.watchPattern || null,
+        groupId: tab.groupId || null,
+        // When the tab is tracking an invoiced order (opened via Search or the auto-watcher), the
+        // order's human-readable number is surfaced so the strip can show a ◆#123 chip and the
+        // user never loses the mapping between tab and order.
+        orderId: tabOrderPayload.get(tab)?.order_id ?? tabOrderPayload.get(tab)?.orderId ?? null,
         onSheet,
       };
     }),
@@ -2460,10 +3041,22 @@ const commands = {
     // Promote the order from "new" to "working" so the Orders panel can filter it out of the queue.
     if (event?.id || event?.orderId) ensureOrderStatusStore().touch(event.id ?? event.orderId);
   },
-  newTab: () => {
-    const tab = createTab();
-    // A tab the user opens starts without a profile, so open the picker straight away.
-    if (!tab.profileId && profiles.length > 0) win?.webContents.send('toggle-panel', 'pick-profile');
+  newTab: (_tab, options) => {
+    // Three entry points: explicit profile id (favorite chip), smart assignment (plain +), or no
+    // preference (shift+click +). Picker only opens when no profile was found and some exist.
+    const explicitId = options?.profileId;
+    const smart = options?.smart !== false && !explicitId;
+    let chosenProfileId = explicitId || null;
+    if (smart && !chosenProfileId) {
+      const groupProfiles = profiles.filter(inActiveGroup);
+      if (groupProfiles.length > 0) {
+        const inUse = new Set(tabs.map((t) => t.profileId).filter(Boolean));
+        const free = groupProfiles.find((p) => !inUse.has(p.id));
+        if (free) chosenProfileId = free.id;
+      }
+    }
+    const tab = createTab(chosenProfileId ? { profileId: chosenProfileId } : {});
+    if (!tab.profileId && profiles.length > 0 && !explicitId) win?.webContents.send('toggle-panel', 'pick-profile');
   },
   assignProfiles: (_tab, options) => assignProfiles(options),
   refreshAll: () => tabs.forEach(reloadTab),
@@ -2476,11 +3069,31 @@ const commands = {
   closeTab: (tab) => closeTab(tab),
   moveTab: (tab, toIndex) => moveTab(tab.id, toIndex),
   closeTabs: (_tab, ids) => closeTabs(Array.isArray(ids) ? ids : []),
+  pinTab: (tab) => togglePinTab(tab),
+  // Tab groups — most take a group id (not a tab) in `arg`.
+  createGroup: (_tab, arg) => createGroup(arg ?? {}),
+  renameGroup: (_tab, arg) => renameGroup(arg?.id, arg?.name),
+  setGroupColor: (_tab, arg) => setGroupColor(arg?.id, arg?.color),
+  toggleGroupCollapse: (_tab, id) => toggleGroupCollapse(id),
+  ungroupTab: (tab) => ungroupTab(tab.id),
+  addTabsToGroup: (_tab, arg) => addTabsToGroup(arg?.groupId, arg?.tabIds ?? []),
+  closeGroup: (_tab, id) => closeGroup(id),
+  setWatchPattern: (tab, pattern) => {
+    tab.watchPattern = typeof pattern === 'string' && pattern.trim() ? pattern.trim() : null;
+    tab.attention = false;
+    sendState();
+  },
+  clearAttention: (tab) => { tab.attention = false; sendState(); },
   duplicate: (tab) => duplicateTab(tab),
   setProfile: (tab, arg) => (arg && typeof arg === 'object'
     ? setProfile(tab, arg.profileId ?? null, { url: typeof arg.url === 'string' ? arg.url : null })
     : setProfile(tab, arg)),
   clearProfileCookies: (tab) => clearProfileCookies(tab),
+  clearCookiesOn: async (_tab, ids) => {
+    const n = await clearCookiesOnTabs(Array.isArray(ids) ? ids : []);
+    notify(`Cleared cookies on ${n} tab${n === 1 ? '' : 's'}.`);
+  },
+  openSignIn: (tab) => openSignInPage(tab),
   autofill: (tab, cardIndex) => autofill(tab, cardIndex),
   autofillSubmit: (tab, cardIndex) => autofillAndSubmit(tab, cardIndex),
   autoLogin: (tab, cardIndex) => autoLogin(tab, cardIndex),
@@ -2506,7 +3119,7 @@ const commands = {
   screenshot: (tab) => screenshot(tab).catch((error) => dialog.showErrorBox('Screenshot failed', error.message)),
 };
 
-const TABLESS = new Set(['hardReset', 'searchEvent', 'moreMenu', 'newTab', 'assignProfiles', 'refreshAll', 'burnAll', 'nextTab', 'previousTab', 'endSession', 'closeTabs']);
+const TABLESS = new Set(['hardReset', 'searchEvent', 'moreMenu', 'newTab', 'assignProfiles', 'refreshAll', 'burnAll', 'nextTab', 'previousTab', 'endSession', 'closeTabs', 'clearCookiesOn']);
 
 /** Runs a command against `tabId`, or the selected tab when omitted. */
 function runCommand(name, tabId, arg) {
@@ -2673,8 +3286,51 @@ async function openSeatMatchTestFlow(payload) {
 ipcMain.handle('seats:test', (_event, payload) => testSeatMatchOnSelectedTab(payload ?? {}));
 ipcMain.handle('seats:test-flow', (_event, payload) => openSeatMatchTestFlow(payload ?? {}));
 ipcMain.handle('recorder:start', () => { startRecording(); return { ok: true }; });
-ipcMain.handle('recorder:stop', () => stopRecording());
+ipcMain.handle('recorder:stop', (_event, options) => stopRecording(options ?? {}));
 ipcMain.handle('recorder:status', () => ({ active: recordingActive, count: recordedActions.length }));
+
+// Playbook CRUD + run
+// Re-save the most recent raw recording as a named playbook. The record-stop path writes a
+// recording-<timestamp>.json file first (unconditionally so nothing is ever lost); this handler
+// picks the newest such file, re-tags variables against the live order, and saves as a playbook.
+ipcMain.handle('playbooks:save-from-last-recording', (_event, { name, orderContext } = {}) => {
+  if (!name) return { error: 'Give the playbook a name.' };
+  try {
+    const dir = app.getPath('userData');
+    const files = fs.readdirSync(dir)
+      .filter((f) => /^recording-\d+\.json$/.test(f))
+      .map((f) => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    if (files.length === 0) return { error: 'No recent recording found.' };
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, files[0].f), 'utf8'));
+    const actions = playbooksStore.autoBindVariables(raw.actions || [], { order: orderContext || null });
+    const hostPatterns = Array.from(new Set((actions || []).map((a) => {
+      try { return new URL(a.url || '').hostname; } catch { return null; }
+    }).filter(Boolean))).slice(0, 5);
+    const pb = playbooksStore.savePlaybook(dir, { name, hostPatterns, actions });
+    return { ok: true, playbook: pb };
+  } catch (error) {
+    return { error: error?.message || 'Could not save playbook.' };
+  }
+});
+
+ipcMain.handle('playbooks:list', () => playbooksStore.listPlaybooks(app.getPath('userData')));
+ipcMain.handle('playbooks:rename', (_event, { id, name } = {}) => {
+  if (!id || !name) return { error: 'Give both an id and a name.' };
+  try {
+    const dir = app.getPath('userData');
+    const existing = playbooksStore.readPlaybook(dir, id);
+    if (!existing) return { error: 'Playbook not found.' };
+    playbooksStore.deletePlaybook(dir, id);
+    const saved = playbooksStore.savePlaybook(dir, { ...existing, name });
+    return { ok: true, playbook: saved };
+  } catch (error) { return { error: error?.message || 'Could not rename.' }; }
+});
+ipcMain.handle('playbooks:read', (_event, id) => playbooksStore.readPlaybook(app.getPath('userData'), id));
+ipcMain.handle('playbooks:delete', (_event, id) => playbooksStore.deletePlaybook(app.getPath('userData'), id));
+ipcMain.handle('playbooks:run', (_event, { tabId, playbookId, order } = {}) => runPlaybookOnTab(tabId, playbookId, order));
+ipcMain.handle('playbooks:run-on-url', (_event, { url, playbookId, order, profileId } = {}) => runPlaybookOnURL(url, playbookId, order, { profileId }));
+ipcMain.handle('playbooks:stop', (_event, runId) => { stopPlaybook(runId); return { ok: true }; });
 ipcMain.handle('proxies:scan', () => scanProxyPool());
 ipcMain.handle('proxies:scan-text', (_event, text) => scanProxyPoolText(text));
 ipcMain.handle('snippets:get', () => loadSnippets());
@@ -2710,6 +3366,59 @@ ipcMain.handle('sync:test', async () => {
 });
 ipcMain.handle('orders:list', (_event, params) => listSyncOrders(params ?? {}));
 ipcMain.handle('orders:set-status', (_event, { id, status } = {}) => markOrderStatus(id, status));
+
+// Account health — on-demand background check that returns {profileId, status, reason} per account.
+// Runs each profile's probe through its own session so cookies and proxy routing match the real tab
+// the user would open. Results are cached so the renderer can render dots without re-querying.
+let accountHealthCache = { at: 0, results: [] };
+async function runAccountHealthCheck() {
+  const sessionFor = (profile) => {
+    const entry = profileSessions.get(profile.id);
+    const partition = entry?.partition ?? profilePartition(profile.id);
+    try { return session.fromPartition(partition); } catch { return null; }
+  };
+  const groupProfiles = profiles.filter(inActiveGroup);
+  const results = await checkAllAccounts(groupProfiles, sessionFor);
+  accountHealthCache = { at: Date.now(), results };
+  win?.webContents.send('account-health-changed', accountHealthCache);
+  return accountHealthCache;
+}
+ipcMain.handle('accounts:health-check', () => runAccountHealthCheck());
+ipcMain.handle('accounts:health', () => accountHealthCache);
+
+// ---------- Shortcut customization ----------
+//
+// Users can rebind any action in shortcuts.js. Overrides are stored as a plain {id: accelerator}
+// map in data/shortcuts.json. The merged map is read when building the application menu and sent
+// to the renderer so in-window handlers can match keystrokes against the current bindings.
+
+let shortcutOverrides = loadShortcutOverrides();
+function loadShortcutOverrides() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(dataPath('shortcuts.json'), 'utf8'));
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {}
+  return {};
+}
+function currentAccelerators() { return resolveAccelerators(shortcutOverrides); }
+function saveShortcutOverrides(next) {
+  shortcutOverrides = { ...next };
+  writeData('shortcuts.json', shortcutOverrides);
+  // Rebuild the menu so the new accelerators take effect without a restart.
+  updateMenu();
+  win?.webContents.send('shortcuts-changed', { accelerators: currentAccelerators() });
+}
+
+ipcMain.handle('shortcuts:get', () => ({ actions: ACTIONS, defaults: DEFAULT_BY_ID, overrides: shortcutOverrides, current: currentAccelerators() }));
+ipcMain.handle('shortcuts:set', (_event, { id, accelerator }) => {
+  if (!(id in DEFAULT_BY_ID)) return { error: 'Unknown action.' };
+  const next = { ...shortcutOverrides };
+  if (!accelerator || accelerator === DEFAULT_BY_ID[id]) delete next[id];
+  else next[id] = String(accelerator);
+  saveShortcutOverrides(next);
+  return { ok: true, current: currentAccelerators() };
+});
+ipcMain.handle('shortcuts:reset', () => { saveShortcutOverrides({}); return { ok: true, current: currentAccelerators() }; });
 ipcMain.on('overlay', (_event, open) => {
   overlayOpen = Boolean(open);
   layout();
@@ -2730,7 +3439,12 @@ app.on('login', (event, webContents, _details, authInfo, callback) => {
   const tab = webContents ? tabs.find((t) => t.view.webContents === webContents) : null;
   const proxy = tab ? tab.proxy : sharedProxy;
   if (!proxy?.username) return;
-  if (tab && ++tab.authAttempts > MAX_PROXY_AUTH_ATTEMPTS) return; // wrong credentials: let the load fail
+  if (tab && ++tab.authAttempts > MAX_PROXY_AUTH_ATTEMPTS) {
+    // The proxy keeps rejecting our credentials. Cool it down so the next pick skips it and we
+    // don't loop on the same dead IP across tabs.
+    if (pool?.markBad && tab.proxy) pool.markBad(tab.proxy, 'auth rejected');
+    return;
+  }
   event.preventDefault();
   callback(proxy.username, proxy.password ?? '');
 });
@@ -2754,7 +3468,9 @@ let menuKey = '';
 function updateMenu() {
   const inBrowser = mode === 'browser';
   const can = perTabProxies();
-  const key = `${inBrowser}|${can}|${Boolean(selectedTab()?.proxy)}`;
+  // Include the user's accelerator overrides in the cache key so rebinding immediately rebuilds.
+  const A = currentAccelerators();
+  const key = `${inBrowser}|${can}|${Boolean(selectedTab()?.proxy)}|${JSON.stringify(shortcutOverrides)}`;
   if (key === menuKey) return;
   menuKey = key;
   const send = (name) => () => runCommand(name);
@@ -2779,9 +3495,9 @@ function updateMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Tab', accelerator: 'CmdOrCtrl+T', enabled: inBrowser, click: send('newTab') },
-        { label: 'Duplicate Tab', accelerator: 'CmdOrCtrl+D', enabled: inBrowser, click: send('duplicate') },
-        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: inBrowser, click: send('closeTab') },
+        { label: 'New Tab', accelerator: A.newTab, enabled: inBrowser, click: send('newTab') },
+        { label: 'Duplicate Tab', accelerator: A.duplicate, enabled: inBrowser, click: send('duplicate') },
+        { label: 'Close Tab', accelerator: A.closeTab, enabled: inBrowser, click: send('closeTab') },
         { type: 'separator' },
         { label: 'Screenshot', accelerator: 'CmdOrCtrl+Shift+S', enabled: inBrowser, click: send('screenshot') },
         { type: 'separator' },
@@ -2798,13 +3514,13 @@ function updateMenu() {
     {
       label: 'View',
       submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', enabled: inBrowser, click: send('reload') },
+        { label: 'Reload', accelerator: A.reload, enabled: inBrowser, click: send('reload') },
         { label: 'Home', accelerator: process.platform === 'darwin' ? 'Cmd+Shift+H' : 'Alt+Home', enabled: inBrowser, click: send('home') },
         { label: 'Refresh All Tabs', accelerator: 'CmdOrCtrl+Shift+R', enabled: inBrowser, click: send('refreshAll') },
         { type: 'separator' },
         {
           label: 'Open Location',
-          accelerator: 'CmdOrCtrl+L',
+          accelerator: A.focusAddress,
           enabled: inBrowser,
           click: () => {
             win.webContents.focus();
@@ -2813,51 +3529,70 @@ function updateMenu() {
         },
         {
           label: 'Jump to Tab…',
-          accelerator: 'CmdOrCtrl+P',
+          accelerator: A.palette,
           enabled: inBrowser,
           click: () => { win?.webContents.focus(); win?.webContents.send('open-palette'); },
         },
         {
           label: 'Tools Panel',
-          accelerator: 'CmdOrCtrl+\\',
+          accelerator: A.toolsPanel,
           enabled: inBrowser,
           click: () => win.webContents.send('toggle-panel'),
         },
         { label: 'Back', accelerator: process.platform === 'darwin' ? 'Cmd+[' : 'Alt+Left', enabled: inBrowser, click: send('back') },
         { label: 'Forward', accelerator: process.platform === 'darwin' ? 'Cmd+]' : 'Alt+Right', enabled: inBrowser, click: send('forward') },
         { type: 'separator' },
-        { label: 'Next Tab', accelerator: 'Ctrl+Tab', enabled: inBrowser, click: send('nextTab') },
-        { label: 'Previous Tab', accelerator: 'Ctrl+Shift+Tab', enabled: inBrowser, click: send('previousTab') },
+        { label: 'Next Tab', accelerator: A.nextTab, enabled: inBrowser, click: send('nextTab') },
+        { label: 'Previous Tab', accelerator: A.previousTab, enabled: inBrowser, click: send('previousTab') },
         { type: 'separator' },
-        {
-          label: 'Page Developer Tools',
-          accelerator: process.platform === 'darwin' ? 'Alt+Cmd+I' : 'Ctrl+Shift+I',
+        // Numeric jump: ⌘⇧1..9 → tab in slot N (Chrome-like, but Shift so we don't clash with the
+        // existing ⌘1/⌘2/⌘3 bulk shortcuts for login/fill/home).
+        ...[1,2,3,4,5,6,7,8,9].map((n) => ({
+          label: `Jump to Tab ${n}`,
+          accelerator: `CmdOrCtrl+Shift+${n}`,
           enabled: inBrowser,
-          click: () => selectedTab()?.view.webContents.openDevTools({ mode: 'detach' }),
-        },
+          visible: false,
+          click: () => { const t = tabs.find((x) => x.slot === n); if (t) selectTab(t.id); },
+        })),
         {
-          label: 'Test Seat Matcher on This Tab…',
+          label: 'Reopen Last Closed Tab',
+          accelerator: A.reopenClosed,
           enabled: inBrowser,
-          visible: false, // feature paused — unhide here and in src/ui/index.html when ready
-          click: () => win?.webContents.send('open-seat-test'),
+          click: () => reopenLastClosedTab(),
         },
+        { type: 'separator' },
+        // Dev-only entries. In a packaged release both are omitted entirely (not just hidden),
+        // so neither the menu item nor its accelerator surface for end users.
+        ...(app.isPackaged ? [] : [
+          {
+            label: 'Page Developer Tools',
+            accelerator: process.platform === 'darwin' ? 'Alt+Cmd+I' : 'Ctrl+Shift+I',
+            enabled: inBrowser,
+            click: () => selectedTab()?.view.webContents.openDevTools({ mode: 'detach' }),
+          },
+          {
+            label: 'Test Seat Matcher on This Tab…',
+            enabled: inBrowser,
+            click: () => win?.webContents.send('open-seat-test'),
+          },
+        ]),
         { role: 'togglefullscreen' },
       ],
     },
     {
       label: 'Proxy',
       submenu: [
-        { label: 'Burn IP and Reload', accelerator: 'CmdOrCtrl+B', enabled: can, click: send('burn') },
+        { label: 'Burn IP and Reload', accelerator: A.burn, enabled: can, click: send('burn') },
         {
           label: globalMute ? 'Unmute All Tabs' : 'Mute All Tabs',
-          accelerator: 'CmdOrCtrl+Shift+M',
+          accelerator: A.muteAll,
           enabled: inBrowser,
           click: () => toggleGlobalMute(),
         },
         { label: 'Burn IP on All Tabs', accelerator: 'CmdOrCtrl+Alt+B', enabled: can, click: send('burnAll') },
         {
           label: selectedTab()?.proxy ? 'Switch to Local IP' : 'Switch to Proxy',
-          accelerator: 'CmdOrCtrl+Shift+P',
+          accelerator: A.toggleProxy,
           enabled: can,
           click: send('toggleProxy'),
         },
@@ -2875,7 +3610,7 @@ function updateMenu() {
     {
       label: 'Profiles',
       submenu: [
-        { label: 'Autofill From Profile', accelerator: 'CmdOrCtrl+Shift+F', enabled: inBrowser, click: send('autofill') },
+        { label: 'Autofill From Profile', accelerator: A.autofill, enabled: inBrowser, click: send('autofill') },
         {
           // These two accelerators are what wins over Chromium's own Cmd+1 / Cmd+2 (switch to tab N).
           // The click handler sends an IPC the renderer catches; the renderer then iterates its
@@ -2883,29 +3618,41 @@ function updateMenu() {
           // in-renderer keyboard listener. Having both lets the shortcut work no matter whether the
           // TabFleet UI or a tab's page has focus.
           label: 'Auto-Login on Selected Tabs',
-          accelerator: 'CmdOrCtrl+1',
+          accelerator: A.bulkAutoLogin,
           enabled: inBrowser,
           click: () => win?.webContents.send('bulk-shortcut', 'autoLogin'),
         },
         {
           label: 'Autofill + Submit on Selected Tabs',
-          accelerator: 'CmdOrCtrl+2',
+          accelerator: A.bulkAutofillSubmit,
           enabled: inBrowser,
           click: () => win?.webContents.send('bulk-shortcut', 'autofillSubmit'),
         },
         {
           label: 'Go Home on Selected Tabs',
-          accelerator: 'CmdOrCtrl+3',
+          accelerator: A.bulkHome,
           enabled: inBrowser,
           click: () => win?.webContents.send('bulk-shortcut', 'home'),
         },
         {
           label: 'Profiles Panel',
-          accelerator: 'CmdOrCtrl+Shift+O',
+          accelerator: A.profilesPanel,
           enabled: inBrowser,
           click: () => win.webContents.send('toggle-panel', 'profiles'),
         },
         { label: 'Orders', accelerator: 'CmdOrCtrl+Shift+U', click: () => { win?.webContents.focus(); win?.webContents.send('open-orders'); } },
+        { type: 'separator' },
+        {
+          label: 'Check All Account Logins',
+          enabled: inBrowser,
+          click: async () => {
+            notify(`Checking ${profiles.filter(inActiveGroup).length} account(s)…`);
+            const { results } = await runAccountHealthCheck();
+            const inCount = results.filter((r) => r.status === 'in').length;
+            const outCount = results.filter((r) => r.status === 'out').length;
+            notify(`Logged in: ${inCount} · Logged out: ${outCount} · Unknown: ${results.length - inCount - outCount}`);
+          },
+        },
         { type: 'separator' },
         { label: 'Import Profiles (CSV)…', click: () => importProfilesFile().then((result) => result && win?.webContents.send('profiles-imported', result)) },
         { label: 'Import From Google Sheet…', enabled: inBrowser, click: () => win.webContents.send('open-sheet-import') },
@@ -2944,6 +3691,28 @@ function createWindow() {
   // The chrome UI is local and never navigates or opens windows.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
+  // Right-click context menu for the TabFleet UI itself (address bar, notes, profile forms,
+  // settings fields). Without this, right-click on an input in the chrome does nothing. Mirrors
+  // what we already give page content: Cut / Copy / Paste / Select All, with edit-flag gating.
+  win.webContents.on('context-menu', (_event, params) => {
+    const t = [];
+    if (params.isEditable) {
+      t.push(
+        { role: 'undo', enabled: params.editFlags.canUndo },
+        { role: 'redo', enabled: params.editFlags.canRedo },
+        { type: 'separator' },
+        { role: 'cut', enabled: params.editFlags.canCut },
+        { role: 'copy', enabled: params.editFlags.canCopy },
+        { role: 'paste', enabled: params.editFlags.canPaste },
+        { role: 'selectAll', enabled: params.editFlags.canSelectAll },
+      );
+    } else if (params.selectionText && params.selectionText.trim()) {
+      t.push({ role: 'copy' });
+    } else {
+      return; // nothing meaningful to show on a blank area of the chrome
+    }
+    Menu.buildFromTemplate(t).popup({ window: win });
+  });
   updateMenu();
 }
 

@@ -90,11 +90,19 @@ async function fetchOrders(fetchImpl, credentials, params = {}, baseURL = SYNC_B
 }
 
 /**
- * Ticketmaster search for an order's event: the name as keywords plus the event date as the date
- * filter. Ticketmaster has no venue or time filter, and adding the venue to the keywords often finds
- * nothing (venue names differ between marketplaces), so those go in the tab's note instead.
+ * Prefers a direct event URL when the order record carries one (Automatiq sometimes includes
+ * `event_url` / `primary_marketplace_url` depending on the integration). Falls back to a
+ * Ticketmaster search by event name + date — TM has no venue or time filter, and adding the venue
+ * to the keywords often finds nothing (venue names differ between marketplaces), so those go in
+ * the tab's note instead.
  */
 function eventSearchURL(event = {}) {
+  const direct = String(
+    event.eventURL ?? event.event_url
+    ?? event.primaryMarketplaceURL ?? event.primary_marketplace_url
+    ?? event.ticketURL ?? event.ticket_url ?? ''
+  ).trim();
+  if (/^https?:\/\//i.test(direct)) return direct;
   const name = String(event.eventName ?? '').trim();
   if (!name) return null;
   const url = new URL('https://www.ticketmaster.com/search');

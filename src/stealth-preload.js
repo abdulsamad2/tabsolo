@@ -16,8 +16,9 @@ try {
   window.addEventListener('message', (event) => {
     if (event?.source !== window) return;
     const data = event?.data;
-    if (!data || data.__fleetRecord !== true) return;
-    try { ipcRenderer.send('record:action', data); } catch (_) {}
+    if (!data) return;
+    if (data.__fleetRecord === true) { try { ipcRenderer.send('record:action', data); } catch (_) {} }
+    else if (data.__fleetReplay === true) { try { ipcRenderer.send('replay:progress', data); } catch (_) {} }
   });
 } catch (_) {}
 

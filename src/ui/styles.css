@@ -205,6 +205,7 @@ label > input, label > select, label > textarea { color: var(--text); font-size:
   cursor: pointer;
   transition: background-color 100ms ease;
   position: relative;
+  position: relative;
 }
 .tab:hover:not([aria-selected="true"]) { background: var(--surface-2); }
 .tab[aria-selected="true"] { background: var(--surface); }
@@ -223,6 +224,115 @@ label > input, label > select, label > textarea { color: var(--text); font-size:
 #status-strip .st-item strong { color: var(--text); font-weight: 500; }
 #status-strip .st-sep { color: var(--border); }
 #status-strip .st-timer { margin-left: auto; }
+
+.shortcuts-card {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+  width: min(640px, 90vw); max-height: 80vh; display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+.shortcuts-card header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.shortcuts-card h2 { margin: 0; font-size: 14px; font-weight: 600; flex: 1; }
+.shortcuts-hint { margin: 10px 16px 0; font-size: 11.5px; color: var(--muted); }
+.shortcuts-list { padding: 10px 16px 16px; overflow: auto; }
+.shortcut-group { margin-top: 14px; }
+.shortcut-group:first-child { margin-top: 0; }
+.shortcut-group h4 { margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.shortcut-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.shortcut-row:last-child { border-bottom: 0; }
+.shortcut-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.shortcut-label strong { font-size: 12.5px; font-weight: 500; }
+.shortcut-label span { font-size: 11px; color: var(--muted); }
+.shortcut-chip {
+  min-width: 110px; padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); font-family: inherit; font-size: 11.5px; cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.shortcut-chip:hover { background: var(--surface-2); }
+.shortcut-chip.customized { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.shortcut-chip.capturing { background: var(--accent); color: #fff; border-color: var(--accent); animation: cap-pulse 1s infinite; }
+.shortcut-chip.readonly { opacity: 0.6; cursor: not-allowed; }
+/* Playbooks modal — larger than the default shortcuts-card so the recording panel + inputs +
+ * list all fit without squeezing. The CSP forbids inline style attributes, so this needs to live
+ * in the stylesheet. */
+.shortcuts-card.playbooks-card {
+  width: min(720px, 92vw);
+  max-height: 85vh;
+}
+.shortcuts-hint-tight { margin: 4px 0 0; }
+.recording-panel {
+  padding: 12px 16px 0; display: flex; flex-direction: column; gap: 10px;
+}
+.recording-status {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+.recording-indicator {
+  flex: 0 0 10px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--muted);
+}
+.recording-indicator.active {
+  background: #c91c1c;
+  box-shadow: 0 0 0 4px color-mix(in srgb, #c91c1c 25%, transparent);
+  animation: rec-pulse 1.6s ease-in-out infinite;
+}
+@keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+.recording-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.recording-text strong { font-size: 13px; font-weight: 500; }
+.recording-text span { font-size: 11px; color: var(--muted); }
+.playbook-target { padding: 10px 16px 0; display: flex; flex-direction: column; gap: 4px; }
+.playbook-target label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); font-weight: 500; }
+.playbook-target input {
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text); font-size: 12px; font-family: inherit; outline: none;
+}
+.playbook-target input:focus { border-color: var(--accent); }
+.playbook-target-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr; gap: 8px; }
+.playbook-target-row label { font-size: 10.5px; }
+.playbooks-list { padding: 10px 16px 16px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.playbook-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface);
+}
+.playbook-row:hover { background: var(--surface-2); }
+.playbook-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.playbook-info strong { font-size: 13px; font-weight: 500; }
+.playbook-info span { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playbook-row > button { margin-left: 2px; }
+.playbook-rename-input {
+  background: var(--bg); border: 1px solid var(--accent); border-radius: 4px;
+  padding: 2px 6px; font-size: 13px; color: var(--text); outline: none;
+}
+@keyframes cap-pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+.link-btn { border: 0; background: transparent; color: var(--accent); font-size: 11.5px; cursor: pointer; padding: 4px 8px; }
+.link-btn:hover { text-decoration: underline; }
+
+.fav-profiles { display: inline-flex; gap: 3px; align-items: center; }
+.fav-chip {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text); font-size: 11px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform 100ms ease, box-shadow 100ms ease;
+}
+.fav-chip:hover { transform: scale(1.1); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent); }
+
+#address-form { position: relative; flex: 1 1 300px; }
+#address { width: 100%; }
+.address-suggest {
+  position: absolute; left: 0; right: 0; top: 100%; margin-top: 2px; z-index: 500;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.25);
+  list-style: none; padding: 4px; max-height: 320px; overflow: auto;
+}
+.address-suggest li {
+  display: grid; grid-template-columns: 1fr; padding: 6px 10px; border-radius: 6px;
+  font-size: 12px; cursor: pointer; color: var(--text);
+}
+.address-suggest li[aria-selected="true"], .address-suggest li:hover { background: var(--surface); }
+.address-suggest li strong { font-weight: 500; }
+.address-suggest li span { color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ⌘P palette */
 #palette { align-items: flex-start; padding-top: 10vh; }
@@ -252,6 +362,30 @@ label > input, label > select, label > textarea { color: var(--text); font-size:
 }
 /* Reorder is driven by pointer events in app.js — a plain grab cursor is enough visual affordance. */
 .tab { cursor: grab; touch-action: none; }
+/* Tab groups — a chip sits before the first member tab and (optionally) stretches a thin colored
+ * underline across every tab in the group so the strip reads as one chunk. */
+.group-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 8px; margin: 7px 2px 0 2px;
+  background: color-mix(in srgb, var(--group-color, var(--accent)) 15%, transparent);
+  color: var(--group-color, var(--accent));
+  border-radius: 999px; cursor: pointer; user-select: none;
+  font-size: 11.5px; font-weight: 500; line-height: 1.4;
+  border: 1px solid color-mix(in srgb, var(--group-color, var(--accent)) 35%, transparent);
+}
+.group-chip:hover { filter: brightness(1.08); }
+.group-chip .gc-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.group-chip .gc-count { opacity: 0.7; margin-left: 2px; font-variant-numeric: tabular-nums; }
+.group-chip.collapsed { padding-right: 12px; }
+.tab.in-group { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--group-color, transparent) 55%, transparent); }
+.tab.in-group[aria-selected="true"]::after { background: var(--group-color, var(--accent)); }
+/* Dense mode for >15 tabs: thinner padding, smaller min width, hide the slot number so the favicon
+ * and title take the horizontal space the strip has left. Order chip + close × stay visible. */
+.tabs-dense .tab { flex-basis: 110px; min-width: 60px; max-width: 160px; padding: 5px 6px 5px 8px; gap: 5px; }
+.tabs-dense .tab .slot { display: none; }
+.tabs-dense .tab .title { font-size: 11.5px; }
+.tabs-dense .tab .order-chip { font-size: 9px; padding: 0 4px; }
+.tabs-dense #tab-strip { padding: 4px 6px 0; gap: 1px; }
 .tab:active { cursor: grabbing; }
 .tab.dragging { opacity: 0.4; }
 .tab.drop-before { box-shadow: inset 3px 0 0 0 var(--accent); }
@@ -267,6 +401,46 @@ label > input, label > select, label > textarea { color: var(--text); font-size:
 .tab[aria-selected="true"] .slot { color: var(--accent); font-weight: 600; }
 .tab.has-error .slot { color: var(--burn); }
 .tab .favicon { flex: 0 0 auto; width: 14px; height: 14px; object-fit: contain; border-radius: 2px; }
+.tab .pin-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+.tab.pinned { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tab .order-chip {
+  flex: 0 0 auto; font-size: 10px; font-weight: 500; letter-spacing: 0.3px;
+  padding: 1px 6px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent); font-variant-numeric: tabular-nums;
+}
+.tab .load-bar {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: tabload 1.2s linear infinite;
+}
+@keyframes tabload {
+  0% { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
+}
+
+/* Recent messages popover anchored to the status strip's history button. */
+#status-strip .st-history-btn {
+  margin-left: 6px; padding: 2px 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 11px; border-radius: 4px; cursor: pointer;
+}
+#status-strip .st-history-btn:hover { color: var(--text); }
+.history-popover {
+  position: fixed; right: 12px; bottom: 34px; z-index: 1000;
+  width: min(380px, 70vw); max-height: 380px; display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.4); overflow: hidden;
+}
+.history-popover header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.history-popover header strong { font-size: 12px; }
+.history-popover header .icon { margin-left: auto; }
+.history-popover ul { list-style: none; margin: 0; padding: 6px; overflow: auto; }
+.history-popover li { padding: 6px 8px; border-radius: 6px; font-size: 12px; color: var(--text); }
+.history-popover li:hover { background: var(--surface); }
+.history-popover li time { display: block; font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+.history-popover li.empty { color: var(--muted); font-style: italic; }
 .tab .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
 .tab .spinner {
   flex: 0 0 auto;
@@ -322,6 +496,22 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; b
 .tab .timer { flex: 0 0 auto; font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--subtle); }
 .tab .note-dot { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: var(--subtle); }
 .tab.timer-done .timer { color: var(--burn); font-weight: 600; }
+.tab.timer-done {
+  animation: tab-pulse 1.4s ease-in-out infinite;
+  box-shadow: inset 0 -2px 0 var(--burn);
+}
+.tab.attention {
+  animation: tab-attn-pulse 1.6s ease-in-out infinite;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+@keyframes tab-attn-pulse {
+  0%, 100% { background: transparent; }
+  50% { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+}
+@keyframes tab-pulse {
+  0%, 100% { background: transparent; }
+  50% { background: color-mix(in srgb, var(--burn) 15%, transparent); }
+}
 
 /* ---------- Toolbar extras ---------- */
 
@@ -611,8 +801,11 @@ button.danger:hover:not(:disabled) { background: var(--error-bg); border-color: 
 #update-banner button:not(.icon) { padding: 4px 12px; font-size: 12px; }
 #update-dismiss { width: 24px; height: 24px; padding: 0; color: var(--muted); border-color: transparent; background: transparent; }
 
-/* Dialogs: keyboard shortcuts ("?") and Settings. */
-#shortcuts-sheet, #settings-sheet, #orders-sheet {
+/* Dialogs: everything that uses the .modal pattern. New sheets must be added here or they'll
+ * render as a plain inline <div> instead of a centered modal with a backdrop. */
+#shortcuts-sheet, #settings-sheet, #orders-sheet,
+#playbooks-sheet, #seat-test-sheet, #palette,
+#save-playbook-sheet {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.4);
   display: grid; place-items: center;
@@ -763,9 +956,15 @@ button.danger:hover:not(:disabled) { background: var(--error-bg); border-color: 
 .orders-card {
   width: calc(100vw - 48px); height: min(760px, calc(100vh - 48px));
   background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
-  display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); overflow: hidden;
+  display: grid; grid-template-rows: auto auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); overflow: hidden;
 }
-.orders-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px 12px; border-bottom: 1px solid var(--border); }
+.orders-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px 12px; border-bottom: 1px solid var(--border); position: relative; }
+.orders-loadbar {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: tabload 1.2s linear infinite; pointer-events: none;
+}
 .orders-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .orders-head .spacer { flex: 1; }
 
@@ -777,16 +976,59 @@ button.danger:hover:not(:disabled) { background: var(--error-bg); border-color: 
 }
 .order-filter:hover { color: var(--text); }
 .order-filter.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+/* The status dot gets its own column so the Ordered cell's stack keeps its two-line layout. */
+#orders-table th.dot-col, #orders-table td.order-dot-cell { width: 20px; padding: 8px 4px 8px 12px; }
 .order-dot {
-  display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;
-  cursor: pointer; vertical-align: middle; border: 1px solid rgba(0,0,0,.1);
+  display: inline-block; width: 10px; height: 10px; padding: 0; margin: 0;
+  border-radius: 50%; border: 1px solid rgba(0,0,0,.15);
+  cursor: pointer; appearance: none; background-clip: padding-box;
+  transition: transform 100ms ease;
 }
+.order-dot:hover { transform: scale(1.25); }
 .order-dot.s-new { background: #3b82f6; }
 .order-dot.s-working { background: #f59e0b; }
 .order-dot.s-handled { background: #22c55e; }
 tr.order-handled { opacity: 0.55; }
-.order-handled-btn { margin-left: 6px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); font-size: 11px; cursor: pointer; color: var(--muted); }
+/* Action cell holds Search + Done side by side; keep them from wrapping unless the viewport is narrow. */
+#orders-table td:last-child { white-space: nowrap; }
+#orders-table td:last-child > button { vertical-align: middle; }
+.order-handled-btn {
+  margin-left: 6px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg);
+  font-size: 11px; cursor: pointer; color: var(--muted);
+}
 .order-handled-btn:hover { color: var(--text); border-color: var(--text); }
+/* Marketplace pill — one color per vendor so the eye can skim a long order list and group by site. */
+/* Account-health dot shown next to the profile name in the picker list. */
+.health-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; border: 1px solid rgba(0,0,0,.1); }
+.health-dot.health-in { background: #22c55e; }
+.health-dot.health-out { background: #ef4444; }
+.health-dot.health-unknown { background: #9ca3af; }
+.marketplace-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 500; letter-spacing: 0.3px;
+  background: var(--surface-2); color: var(--muted);
+}
+.marketplace-pill.mp-ticketmaster { background: #e0e9ff; color: #1b45a3; }
+.marketplace-pill.mp-axs { background: #ffecd1; color: #a04a00; }
+.marketplace-pill.mp-seatgeek { background: #ffe3e0; color: #a30c3e; }
+.marketplace-pill.mp-stubhub { background: #d6f5e3; color: #15803d; }
+.marketplace-pill.mp-vividseats { background: #ffe3f3; color: #a3005f; }
+.marketplace-pill.mp-viagogo { background: #e0f0ff; color: #0d47a1; }
+.marketplace-pill.mp-gametime { background: #fff3cd; color: #7a4a00; }
+.marketplace-pill.mp-tickpick { background: #e7e5ff; color: #4c1d95; }
+.marketplace-pill.mp-fanxchange { background: #e3f8ff; color: #0e5a7a; }
+.marketplace-pill.mp-ticket_evo, .marketplace-pill.mp-ticket-evo { background: #f3e8ff; color: #6b21a8; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-ticketmaster { background: #1e3a8a40; color: #a5c0ff; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-axs { background: #78340f40; color: #ffd49b; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-seatgeek { background: #7f1d2d40; color: #ffb3bd; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-stubhub { background: #16653440; color: #96eab2; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-vividseats { background: #83186140; color: #ffb3e3; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-viagogo { background: #0d47a140; color: #a5c7ff; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-gametime { background: #78350f40; color: #ffd58e; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-tickpick { background: #3730a340; color: #c3b7ff; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-fanxchange { background: #164e6340; color: #a0e2ff; }
+:root:not([data-theme="light"]) .marketplace-pill.mp-ticket_evo, :root:not([data-theme="light"]) .marketplace-pill.mp-ticket-evo { background: #581c8740; color: #ddb5ff; }
 .orders-body { display: flex; min-height: 0; min-width: 0; }
 .orders-table-wrap { flex: 1; min-width: 0; overflow: auto; position: relative; }
 #orders-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -797,7 +1039,9 @@ tr.order-handled { opacity: 0.55; }
   text-transform: uppercase; letter-spacing: 0.04em;
   padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap;
 }
-#orders-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+#orders-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: 12.5px; }
+#orders-table th { padding: 8px 10px; font-size: 11px; }
+tr.order-handled td { padding-top: 6px; padding-bottom: 6px; }
 #orders-table td.num, #orders-table td:last-child { white-space: nowrap; }
 #orders-table td.event { min-width: 160px; }
 #orders-table td.event strong { display: block; font-weight: 600; }

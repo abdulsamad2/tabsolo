@@ -123,17 +123,20 @@
         </button>
         <form id="address-form">
           <input id="address" type="text" autocomplete="off" spellcheck="false" placeholder="Search or enter a website address">
+          <ul id="address-suggest" class="address-suggest" hidden role="listbox"></ul>
         </form>
         <select id="region" title="Region for this tab" aria-label="Region" hidden></select>
         <button id="proxy-toggle" data-cmd="toggleProxy" class="proxy-pill" title="Switch this tab between your local internet and a proxy"></button>
         <button data-cmd="burn" class="burn" title="Switch this tab to a new IP address (keeps you signed in)">New IP</button>
-        <button data-cmd="hardReset" class="burn reset" title="Clear this tab's cookies, cache and saved logins, give it a new IP from the pool, and reload">🧹 Clear tab</button>
+        <button id="clear-tab-btn" class="burn reset" title="Clear this tab's cookies, cache and saved logins, give it a new IP from the pool, and reload">🧹 Clear tab</button>
         <button id="group-badge" class="group-badge" hidden title="The group of accounts for this session. It's locked until TabFleet restarts.">
           <span class="group-dot" aria-hidden="true"></span><span class="group-badge-name"></span><span class="group-lock" aria-hidden="true">🔒</span>
         </button>
+        <div id="fav-profiles" class="fav-profiles" title="Click a favorite profile to open a tab with it"></div>
         <button id="orders-open" title="Your Automatiq Sync orders (Ctrl/⌘ Shift U)">Orders</button>
         <button id="seat-test-open" title="Dev: inject the TM seat matcher into the current tab with a fake order" hidden>🧪 Seat test</button>
-        <button id="record-toggle" title="Record every click, input, and navigation across all tabs. Writes a JSON log you can inspect to build an auto-flow." hidden>🔴 Record</button>
+        <button id="record-toggle" title="Record every click, input, and navigation on this tab. Stop to save as a reusable playbook.">🔴 Record</button>
+        <button id="playbooks-open" title="Open the saved playbooks library">📜 Playbooks</button>
         <button id="panel-toggle" class="primary-soft" title="Open the side panel: profiles, colors, timer, notes, quick fill (Ctrl/⌘ \)" aria-pressed="false">Profiles</button>
         <button id="settings-open" class="icon settings-btn" title="Settings — updates, notifications, theme (Ctrl/⌘ ,)" aria-label="Settings">⚙</button>
         <button id="more-menu-btn" class="icon" title="More actions" aria-label="More actions" aria-haspopup="menu">⋯</button>
@@ -343,7 +346,45 @@
       <span class="st-sep">·</span>
       <span class="st-item st-tabs" title="Open tabs"></span>
       <span class="st-item st-timer" title="Session uptime"></span>
+      <button id="st-history-btn" class="st-history-btn" title="Recent messages">🕘</button>
     </footer>
+    <div id="history-popover" class="history-popover" hidden>
+      <header><strong>Recent messages</strong><button class="icon" id="history-close" aria-label="Close">×</button></header>
+      <ul id="history-list"></ul>
+    </div>
+  </div>
+
+  <div id="playbooks-sheet" class="modal" role="dialog" aria-labelledby="playbooks-title" hidden>
+    <div class="shortcuts-card playbooks-card">
+      <header>
+        <h2 id="playbooks-title">Recording &amp; Playbooks</h2>
+        <button id="playbooks-close" class="icon" aria-label="Close">×</button>
+      </header>
+      <div id="recording-panel" class="recording-panel">
+        <div class="recording-status">
+          <span id="recording-indicator" class="recording-indicator"></span>
+          <div class="recording-text">
+            <strong id="recording-title">Not recording</strong>
+            <span id="recording-sub">Click Start to capture a flow across all tabs. Stop to save it as a playbook.</span>
+          </div>
+          <button id="recording-toggle" class="primary">Start recording</button>
+        </div>
+      </div>
+      <div class="playbook-target">
+        <label>Event URL (optional)
+          <input id="playbook-target-url" type="text" placeholder="https://www.ticketmaster.com/event/… — leave empty to run on current tab" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="playbook-target-row">
+          <label>Section<input id="playbook-section" type="text" autocomplete="off" placeholder="e.g. 123 or GA"></label>
+          <label>Row<input id="playbook-row" type="text" autocomplete="off" placeholder="e.g. M"></label>
+          <label>Low seat<input id="playbook-low-seat" type="number" min="1" placeholder="1"></label>
+          <label>High seat<input id="playbook-high-seat" type="number" min="1" placeholder="2"></label>
+          <label>Quantity<input id="playbook-qty" type="number" min="1" placeholder="2"></label>
+        </div>
+        <p class="shortcuts-hint shortcuts-hint-tight">The playback replaces the recorded Section/Row/Seat with these values. If Low ≠ High, the seat-click step runs once for each seat in the range so the full group gets carted.</p>
+      </div>
+      <div id="playbooks-list" class="playbooks-list"></div>
+    </div>
   </div>
 
   <div id="palette" class="modal" role="dialog" aria-labelledby="palette-title" hidden>
@@ -418,10 +459,11 @@
     <div class="orders-card">
       <header class="orders-head">
         <h2 id="orders-title">New orders</h2>
-        <span class="hint">Last 10 invoiced</span>
+        <span class="hint">Last 25 invoiced</span>
         <span class="spacer"></span>
         <button id="orders-refresh" title="Refresh">↻ Refresh</button>
         <button id="orders-close" class="icon" aria-label="Close">×</button>
+        <div id="orders-loadbar" class="orders-loadbar" hidden></div>
       </header>
       <div id="orders-filter" class="orders-filter"></div>
       <div class="orders-body">
@@ -429,6 +471,7 @@
           <table id="orders-table">
             <thead>
               <tr>
+                <th class="dot-col" aria-label="Status"></th>
                 <th>Ordered</th><th>Event</th><th>Event date</th><th>Seats</th>
                 <th class="num">Qty</th><th class="num">Total</th><th>Marketplace</th><th></th>
               </tr>
@@ -499,29 +542,11 @@
     <div class="shortcuts-card">
       <header>
         <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+        <button id="shortcuts-reset" class="link-btn" title="Restore all defaults">Reset defaults</button>
         <button id="shortcuts-close" class="icon" aria-label="Close">×</button>
       </header>
-      <dl>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd></dt><dd>Auto-login on every selected tab</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>2</kbd></dt><dd>Autofill &amp; submit on every selected tab</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>3</kbd></dt><dd>Go home on every selected tab</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>P</kbd></dt><dd>Jump to any open tab</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>A</kbd></dt><dd>Select every tab (for a bulk action)</dd>
-        <dt><kbd>Shift</kbd>-click / <kbd>⌘</kbd>-click a tab</dt><dd>Range / toggle multi-select</dd>
-        <dt>Drag a tab</dt><dd>Reorder in the strip</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd></dt><dd>Mute every tab (toggle)</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd></dt><dd>Open Profiles panel + search</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>\</kbd></dt><dd>Toggle the side panel</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd></dt><dd>Autofill the current form</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>Enter</kbd></dt><dd>Autofill &amp; click the next button</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>T</kbd></dt><dd>New tab</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>W</kbd></dt><dd>Close current tab</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>R</kbd></dt><dd>Reload current tab</dd>
-        <dt><kbd>Alt</kbd> + <kbd>Home</kbd> / <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd></dt><dd>Home: the profile's homepage, or the start page</dd>
-        <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>B</kbd></dt><dd>Get a new IP for this tab</dd>
-        <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></dt><dd>Navigate the profile picker</dd>
-        <dt><kbd>?</kbd></dt><dd>Show this cheat sheet</dd>
-      </dl>
+      <p class="shortcuts-hint">Click a shortcut to rebind it. Press the new key combo, Esc to cancel, Delete to clear.</p>
+      <div id="shortcuts-list" class="shortcuts-list"></div>
     </div>
   </div>
   <script src="app.js"></script>
