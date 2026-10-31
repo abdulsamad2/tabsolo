@@ -3,461 +3,369 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>TabFleet — Documentation</title>
-  <meta name="description" content="TabFleet: multi-account browser with per-tab proxies, playbook automation, order integration, and deep fingerprint stealth. Full feature guide, shortcuts, and screens.">
+  <title>TabFleet — The browser built for ticket resale</title>
+  <meta name="description" content="One window. Twenty accounts. Zero compromises. TabFleet is the multi-account browser professionals use to fulfill drops faster, with per-tab proxies, record-and-replay playbooks, and deep stealth.">
+  <meta property="og:title" content="TabFleet — The browser built for ticket resale">
+  <meta property="og:description" content="One window. Twenty accounts. Zero compromises.">
+  <meta property="og:image" content="assets/screenshots/hero.png">
   <link rel="icon" href="assets/icon.svg">
   <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
-<a href="#overview" class="skip">Skip to content</a>
 
-<header class="topbar">
-  <div class="brand">
-    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="4" rx="1" fill="#4c6ef5"/><rect x="2" y="10" width="14" height="4" rx="1" fill="#9ba3af"/><rect x="2" y="16" width="18" height="4" rx="1" fill="#4c6ef5"/></svg>
-    <strong>TabFleet</strong><span class="ver">v1.3.14</span>
-  </div>
-  <nav class="topnav">
-    <a href="https://github.com/abdulsamad2/tab_fleet/releases/latest">Download</a>
-    <a href="https://github.com/abdulsamad2/tab_fleet">GitHub</a>
-    <button id="menu-toggle" aria-label="Menu">☰</button>
+<header class="nav">
+  <a href="#top" class="brand">
+    <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="4" rx="1" fill="#4c6ef5"/><rect x="2" y="10" width="14" height="4" rx="1" fill="#9ba3af"/><rect x="2" y="16" width="18" height="4" rx="1" fill="#4c6ef5"/></svg>
+    <strong>TabFleet</strong>
+  </a>
+  <nav class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#how">How it works</a>
+    <a href="#use-cases">Use cases</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#faq">FAQ</a>
   </nav>
+  <a href="#pricing" class="nav-cta">Get TabFleet →</a>
 </header>
 
-<div class="layout">
-  <aside class="sidebar" id="sidebar">
+<section class="hero" id="top">
+  <div class="hero-inner">
+    <span class="eyebrow">Version 1.3.14 · built for professionals</span>
+    <h1>One window.<br>Twenty accounts.<br>Zero compromises.</h1>
+    <p class="lede">TabFleet is the multi-account browser the fastest resale teams use to fulfill drops. Per-tab proxies, encrypted autofill, record-and-replay playbooks, and fingerprint stealth so deep every account looks like a different device.</p>
+    <div class="cta-row">
+      <a href="#pricing" class="btn btn-primary">Get TabFleet</a>
+      <a href="#how" class="btn btn-ghost">See it in action ↓</a>
+    </div>
+    <div class="hero-shot">
+      <img src="assets/screenshots/hero.png" alt="TabFleet with multiple tabs" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder tall', innerHTML: '<span class=\'tag\'>Hero screenshot</span><em>Drop <code>docs/assets/screenshots/hero.png</code> — ~2000×1200 — the main window with 8+ tabs, status strip, and side panel.</em>'}));">
+    </div>
+  </div>
+</section>
+
+<section class="stats">
+  <div class="stat"><strong>20+</strong><span>tabs per window, each with its own session</span></div>
+  <div class="stat"><strong>&lt; 3s</strong><span>from drop open to seats in cart</span></div>
+  <div class="stat"><strong>1-click</strong><span>login across every selected account</span></div>
+  <div class="stat"><strong>100%</strong><span>of fingerprint vectors spoofed per profile</span></div>
+</section>
+
+<section id="features" class="section">
+  <div class="section-head">
+    <span class="section-eyebrow">Why TabFleet</span>
+    <h2>Everything a resale operator needs. In one window.</h2>
+    <p class="section-sub">Chrome doesn't know you have 20 accounts. TabFleet does — and treats every tab like its own device.</p>
+  </div>
+
+  <div class="bento">
+    <article class="bento-item lg">
+      <h3>Per-tab proxies with live cooldown</h3>
+      <p>Every tab routes through its own IP. Failures cool a proxy down automatically. One click runs the whole pool through a reputation checker and prunes the datacenter/VPN flags before the drop.</p>
+      <div class="bento-shot small"><img src="assets/screenshots/proxies.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<em>Status strip showing proxy, profile, and cooldown counter.</em>'}));"></div>
+    </article>
+
+    <article class="bento-item">
+      <h3>Record once. Replay forever.</h3>
+      <p>Buy once by hand. TabFleet captures the whole flow. Replay it against any order — the section, row, and seat range are substituted automatically.</p>
+    </article>
+
+    <article class="bento-item">
+      <h3>Encrypted autofill</h3>
+      <p>Card, CVV, password, OTP stored encrypted. Copy from TabFleet, paste anywhere else and it's gibberish. Inside TabFleet it decrypts automatically.</p>
+    </article>
+
+    <article class="bento-item">
+      <h3>Fingerprint stealth</h3>
+      <p>UA, WebGL, canvas, fonts, audio, iframe-chrome, webdriver — every surface a bot-detector looks at is rewritten per profile seed. Each account looks like a different machine.</p>
+    </article>
+
+    <article class="bento-item lg">
+      <h3>One keystroke. Every selected tab.</h3>
+      <p>Select 8 tabs. Press <kbd>⌘1</kbd>. Watch 8 logins fire. <kbd>⌘2</kbd> auto-fills the next page on all 8. <kbd>⌘3</kbd> sends them all home. The whole operation moves as one.</p>
+      <div class="bento-shot small"><img src="assets/screenshots/bulk.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<em>Multi-select highlighted on tab strip with status: <code>✓ 8 selected</code>.</em>'}));"></div>
+    </article>
+
+    <article class="bento-item">
+      <h3>Order integration</h3>
+      <p>Pulls invoiced orders from your point-of-sale. New orders can auto-open event tabs with the seats pre-noted. A status filter keeps your queue clean.</p>
+    </article>
+
+    <article class="bento-item">
+      <h3>Tab groups</h3>
+      <p>Color-coded groups collapse into a single chip. Group by drop, by venue, by tier. Rename, recolor, close a whole group with one click.</p>
+    </article>
+
+    <article class="bento-item">
+      <h3>URL &amp; attention watch</h3>
+      <p>Tell a tab to ping you when it reaches checkout. Set a timer per tab. TabFleet pulses the tab + fires a notification — never miss a captcha.</p>
+    </article>
+  </div>
+</section>
+
+<section id="how" class="section tinted">
+  <div class="section-head">
+    <span class="section-eyebrow">How it works</span>
+    <h2>From the moment you launch TabFleet to seats in cart.</h2>
+  </div>
+
+  <div class="steps">
+    <article class="step">
+      <div class="step-text">
+        <span class="step-n">01</span>
+        <h3>Launch with your pool &amp; team</h3>
+        <p>Pick a proxy source — direct, a pasted list, a rotating gateway, or a remote list URL. Choose which group of accounts this session is for. Everything downstream respects that lock: tabs, autofill, playbooks.</p>
+        <ul class="checklist">
+          <li>Direct · HTTP/SOCKS5 lists · rotating gateways · remote URLs</li>
+          <li>Account groups isolate card-on-file and cookies</li>
+          <li>Session restore prompts on reopen — never auto-crashes you back into a stale drop</li>
+        </ul>
+      </div>
+      <div class="step-shot"><img src="assets/screenshots/launcher.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<em>Launcher: proxy source + account group picker.</em>'}));"></div>
+    </article>
+
+    <article class="step reversed">
+      <div class="step-text">
+        <span class="step-n">02</span>
+        <h3>Spin up tabs with the right profile</h3>
+        <p>A new tab is a complete browser — its own cookies, proxy, timezone and fingerprint. TabFleet smart-assigns a free profile automatically, so by the time your pointer is on the address bar the right account is already loaded.</p>
+        <ul class="checklist">
+          <li>⌘T opens a tab · Shift+click + picks a specific profile</li>
+          <li>Favicons, order chips, and compact mode so 25 tabs stay readable</li>
+          <li>Drag-reorder, pin, color-group — just like Chrome, plus more</li>
+        </ul>
+      </div>
+      <div class="step-shot"><img src="assets/screenshots/tabs.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<em>Tab strip with groups + order chips + multi-select highlighted.</em>'}));"></div>
+    </article>
+
+    <article class="step">
+      <div class="step-text">
+        <span class="step-n">03</span>
+        <h3>Record a drop. Replay it on every account.</h3>
+        <p>Click <strong>🔴 Record</strong>, do the drop once by hand, click <strong>⏹ Stop</strong>. Open the Playbooks panel, fill section/row/low-seat/high-seat/quantity. Click <strong>▶ Run</strong>. A new tab opens, navigates the event, picks the exact seats, and carts them — with your profile logged in.</p>
+        <ul class="checklist">
+          <li>Seat ranges expand into N real clicks — pairs, groups, floors</li>
+          <li>Retries up to 12s per element — pages that load async still work</li>
+          <li>Resilient to navigation — login redirects, payment handoff, Shopify re-renders</li>
+        </ul>
+      </div>
+      <div class="step-shot"><img src="assets/screenshots/playbooks.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<em>Playbooks panel: Event URL + Section/Row/Low/High/Quantity + saved playbooks list.</em>'}));"></div>
+    </article>
+
+    <article class="step reversed">
+      <div class="step-text">
+        <span class="step-n">04</span>
+        <h3>Fulfill in bulk, not one at a time</h3>
+        <p>Select every tab with ⌘A. Fire a shortcut. Every selected account logs in, autofills, or jumps home in parallel. No more Alt-Tabbing between windows. No more "wait, which account was that?"</p>
+        <ul class="checklist">
+          <li>⌘1 auto-login · ⌘2 autofill+submit · ⌘3 go home — all broadcast</li>
+          <li>Shift+Enter in the address bar sends the URL to every selected tab</li>
+          <li>Right-click → Clear cookies / Burn IP / Close — on every selection</li>
+        </ul>
+      </div>
+      <div class="step-shot"><img src="assets/screenshots/bulk-shortcuts.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<em>Right-click menu showing bulk section: "Clear cookies on 4, Auto-Login on 4…"</em>'}));"></div>
+    </article>
+  </div>
+</section>
+
+<section id="use-cases" class="section">
+  <div class="section-head">
+    <span class="section-eyebrow">Who it's for</span>
+    <h2>Built around how your operation already runs.</h2>
+  </div>
+
+  <div class="cases">
+    <article>
+      <h3>Primary drops</h3>
+      <p>Ticketmaster, AXS, SeatGeek, Live Nation. Full queue awareness, drop-time stealth, bulk login so every tab enters the queue at the same second. Playbooks turn a 90-second cart into a 10-second one.</p>
+    </article>
+    <article>
+      <h3>Secondary resale</h3>
+      <p>StubHub, Vivid, TickPick, custom marketplaces. Autofill resolvers handle any marketplace's listing form. Order integration pulls your invoices and tracks what's fulfilled.</p>
+    </article>
+    <article>
+      <h3>Team operations</h3>
+      <p>Share playbooks across operators. Each person's TabFleet runs with their own profiles and proxies but a common recipe for a drop. New hires onboard against a working flow instead of a Google Doc.</p>
+    </article>
+    <article>
+      <h3>High-volume fulfillment</h3>
+      <p>Pull invoiced orders from Automatiq. Auto-open event tabs for new orders. Status filter and account health keep a 50-order Tuesday as calm as a 5-order one.</p>
+    </article>
+  </div>
+</section>
+
+<section id="shortcuts" class="section tinted">
+  <div class="section-head">
+    <span class="section-eyebrow">Keyboard-first</span>
+    <h2>Every operation. One key away.</h2>
+    <p class="section-sub">Every shortcut below is rebindable in Settings. These are the defaults.</p>
+  </div>
+
+  <div class="shortcut-grid">
+    <div><h4>Multi-tab</h4>
+      <ul>
+        <li><kbd>⌘A</kbd> Select all tabs</li>
+        <li><kbd>⌘1</kbd> Auto-login on every selected tab</li>
+        <li><kbd>⌘2</kbd> Autofill + submit on every selected tab</li>
+        <li><kbd>⌘3</kbd> Go home on every selected tab</li>
+        <li><kbd>Shift+Enter</kbd> in URL bar — broadcast</li>
+      </ul>
+    </div>
+    <div><h4>Navigation</h4>
+      <ul>
+        <li><kbd>⌘T</kbd> New tab</li>
+        <li><kbd>⌘W</kbd> Close tab · <kbd>⌘⇧T</kbd> reopen last</li>
+        <li><kbd>⌘P</kbd> Jump-to-tab palette</li>
+        <li><kbd>⌘⇧1-9</kbd> Jump by slot</li>
+      </ul>
+    </div>
+    <div><h4>Profiles &amp; proxy</h4>
+      <ul>
+        <li><kbd>⌘⇧F</kbd> Autofill</li>
+        <li><kbd>⌘⇧O</kbd> Profiles panel</li>
+        <li><kbd>⌘B</kbd> Burn IP</li>
+        <li><kbd>⌘⇧M</kbd> Mute all</li>
+      </ul>
+    </div>
+    <div><h4>Playbooks &amp; orders</h4>
+      <ul>
+        <li><kbd>⌘⇧U</kbd> Open orders</li>
+        <li>🔴 Record toolbar button</li>
+        <li>📜 Playbooks panel</li>
+        <li><kbd>⌘\</kbd> Side panel</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="pricing" class="section">
+  <div class="section-head">
+    <span class="section-eyebrow">Pricing</span>
+    <h2>Pick the plan that fits your fleet.</h2>
+    <p class="section-sub">All plans include lifetime updates in the current major version, encrypted autofill, playbooks, and proxy pool management.</p>
+  </div>
+
+  <div class="pricing">
+    <article class="plan">
+      <h3>Solo</h3>
+      <div class="price"><span class="amt">$79</span><span class="per">/ month</span></div>
+      <p class="plan-sub">For one operator working a few accounts.</p>
+      <ul>
+        <li>1 workstation (Mac or Windows)</li>
+        <li>Up to 15 accounts</li>
+        <li>Playbooks + record &amp; replay</li>
+        <li>Email support</li>
+      </ul>
+      <a href="#contact" class="btn btn-ghost">Start trial</a>
+    </article>
+
+    <article class="plan featured">
+      <span class="badge">Most popular</span>
+      <h3>Pro</h3>
+      <div class="price"><span class="amt">$199</span><span class="per">/ month</span></div>
+      <p class="plan-sub">For professional resellers running drops full-time.</p>
+      <ul>
+        <li>3 workstations</li>
+        <li>Unlimited accounts</li>
+        <li>Automatiq / POS order integration</li>
+        <li>Priority support + onboarding call</li>
+        <li>Shared playbooks across machines</li>
+      </ul>
+      <a href="#contact" class="btn btn-primary">Get Pro</a>
+    </article>
+
+    <article class="plan">
+      <h3>Team</h3>
+      <div class="price"><span class="amt">Custom</span></div>
+      <p class="plan-sub">For teams of 4+ operators.</p>
+      <ul>
+        <li>Site license</li>
+        <li>Centralized profile distribution</li>
+        <li>Dedicated Slack / Telegram channel</li>
+        <li>Custom marketplace resolvers</li>
+        <li>SLA on bugs during drop windows</li>
+      </ul>
+      <a href="#contact" class="btn btn-ghost">Contact sales</a>
+    </article>
+  </div>
+
+  <p class="pricing-note">All plans billed monthly, cancel anytime. No proxies included — bring your own pool.</p>
+</section>
+
+<section id="faq" class="section">
+  <div class="section-head">
+    <span class="section-eyebrow">FAQ</span>
+    <h2>Common questions.</h2>
+  </div>
+
+  <div class="faq">
+    <details open>
+      <summary>Does TabFleet come with proxies?</summary>
+      <p>No. Bring your own HTTP or SOCKS5 pool. TabFleet works with every provider we've tested — residential, mobile, ISP, rotating or sticky. The in-app <strong>Check Pool</strong> tool scores your proxies and removes the flagged ones.</p>
+    </details>
+
+    <details>
+      <summary>Will my accounts get banned?</summary>
+      <p>No tool guarantees that. What TabFleet does is give each account its own fingerprint, cookies, IP and timezone — so from the site's point of view, every tab is a different machine. Pair it with good residential proxies and warmed accounts and you'll be in the top percentile for how resellers run.</p>
+    </details>
+
+    <details>
+      <summary>What platforms do you support?</summary>
+      <p>macOS (Apple Silicon and Intel) and Windows 10/11. One license covers both — install on your Mac at home and your Windows rig at the office.</p>
+    </details>
+
+    <details>
+      <summary>Does it work with Ticketmaster / AXS / SeatGeek?</summary>
+      <p>Yes. Playbooks are tested against TM's SVG seat maps (section/row/seat targeting), AXS login redirects, and SeatGeek's React routing. Record once per marketplace, run forever.</p>
+    </details>
+
+    <details>
+      <summary>How does licensing work?</summary>
+      <p>License is tied to the workstation(s) on your plan. Switch machines by deactivating the old one from your account page. No forced hardware fingerprint lock-in.</p>
+    </details>
+
+    <details>
+      <summary>Is there a trial?</summary>
+      <p>Yes — 7 days of Pro, no card required. Contact us for a key.</p>
+    </details>
+
+    <details>
+      <summary>What happens if TabFleet crashes mid-drop?</summary>
+      <p>Session restore brings every tab back exactly where it was — including proxy assignment, profile, group membership and tab order. You choose whether to restore or start fresh on next launch.</p>
+    </details>
+
+    <details>
+      <summary>Does it update automatically?</summary>
+      <p>Yes. TabFleet checks for updates in the background and installs them on next restart. You can disable auto-update in Settings if a drop window is coming.</p>
+    </details>
+  </div>
+</section>
+
+<section id="contact" class="section cta-section">
+  <div class="cta-inner">
+    <h2>Ready to run your next drop faster?</h2>
+    <p>Email us for a trial key, a demo, or team pricing. We respond within a few hours.</p>
+    <div class="cta-row">
+      <a href="mailto:sales@tabfleet.app" class="btn btn-primary">Email sales</a>
+      <a href="https://t.me/tabfleet" class="btn btn-ghost">Telegram</a>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="foot-inner">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="4" rx="1" fill="#4c6ef5"/><rect x="2" y="10" width="14" height="4" rx="1" fill="#9ba3af"/><rect x="2" y="16" width="18" height="4" rx="1" fill="#4c6ef5"/></svg>
+      <strong>TabFleet</strong>
+    </div>
     <nav>
-      <strong>Start here</strong>
-      <a href="#overview">Overview</a>
-      <a href="#install">Install &amp; launch</a>
-      <a href="#first-session">Your first session</a>
-
-      <strong>Core workflow</strong>
-      <a href="#tabs">Tabs &amp; multi-select</a>
-      <a href="#groups">Tab groups</a>
-      <a href="#profiles">Profiles &amp; accounts</a>
-      <a href="#proxies">Proxy pool</a>
-
-      <strong>Agentic features</strong>
-      <a href="#playbooks">Playbooks (record + replay)</a>
-      <a href="#orders">Orders panel</a>
-      <a href="#bulk">Bulk shortcuts</a>
-      <a href="#watch">URL watch &amp; alerts</a>
-
-      <strong>Pages &amp; panels</strong>
-      <a href="#pages">Every page explained</a>
-
-      <strong>Reference</strong>
-      <a href="#shortcuts">All shortcuts</a>
-      <a href="#stealth">Fingerprint stealth</a>
-      <a href="#troubleshoot">Troubleshooting</a>
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+      <a href="mailto:sales@tabfleet.app">Contact</a>
     </nav>
-  </aside>
-
-  <main class="content">
-
-    <!-- OVERVIEW ------------------------------------------------------------------------ -->
-    <section id="overview" class="hero">
-      <h1>TabFleet</h1>
-      <p class="lede">A multi-account browser for people who run drops. Per-tab proxies, encrypted profile autofill, record-and-replay playbooks, deep fingerprint stealth — in one Chromium shell designed for twenty tabs at once.</p>
-      <div class="cta-row">
-        <a href="https://github.com/abdulsamad2/tab_fleet/releases/latest" class="btn btn-primary">Download for Mac &amp; Windows</a>
-        <a href="#install" class="btn">Get started</a>
-      </div>
-      <figure class="hero-figure">
-        <img src="assets/screenshots/hero.png" alt="TabFleet main browser view with multiple tabs, status strip, and side panel" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<span>Replace me with <code>docs/assets/screenshots/hero.png</code></span><em>A screenshot of the browser view with 6+ tabs, status strip, and side panel.</em>'}));">
-      </figure>
-    </section>
-
-    <section>
-      <h2>What TabFleet is</h2>
-      <p>Each tab is a separate browser session with its own cookies, local storage, proxy IP, and timezone. Think of it as 20 Chromes running side by side, in one window, with one keyboard shortcut away from any bulk action.</p>
-      <div class="feature-grid">
-        <article><h3>Per-tab proxy</h3><p>Every tab routes through its own HTTP or SOCKS5 proxy. Pool-based rotation, cooldown on failure, reputation check against ipquery.io.</p></article>
-        <article><h3>Encrypted profiles</h3><p>Card number, CVV, expiry, password and OTP are stored encrypted. The clipboard is encrypted at copy and decrypted only inside TabFleet.</p></article>
-        <article><h3>Fingerprint stealth</h3><p>UA, Sec-CH-UA, WebGL, canvas, fonts, AudioContext, iframe-chrome, webdriver — all spoofed per profile seed so each account looks like a distinct real device.</p></article>
-        <article><h3>Playbooks</h3><p>Record a drop flow once. Replay it against any order with section/row/seats substituted. First-to-cart wins across tabs.</p></article>
-        <article><h3>Order integration</h3><p>Automatiq Sync pulls invoiced orders. Optional auto-open starts tabs for new orders; a status filter (New / Working / Handled) tracks your queue.</p></article>
-        <article><h3>Bulk shortcuts</h3><p>⌘A to select every tab, ⌘1/⌘2/⌘3 to auto-login / autofill-submit / go home across the whole selection. Shift+Enter in the address bar broadcasts a URL to every selected tab.</p></article>
-      </div>
-    </section>
-
-    <!-- INSTALL -------------------------------------------------------------------------- -->
-    <section id="install">
-      <h2>1. Install &amp; launch</h2>
-
-      <h3>macOS</h3>
-      <ol>
-        <li>Download the latest <strong>.dmg</strong> (<code>-arm64</code> for Apple Silicon, plain <code>.dmg</code> for Intel) from the <a href="https://github.com/abdulsamad2/tab_fleet/releases/latest">releases page</a>.</li>
-        <li>Open the .dmg, drag <strong>TabFleet.app</strong> to Applications.</li>
-        <li>First launch: right-click the app → <strong>Open</strong>. Gatekeeper warns because the build isn't signed; <strong>Open</strong> once and macOS remembers.</li>
-      </ol>
-
-      <h3>Windows</h3>
-      <ol>
-        <li>Download <strong>TabFleet-Setup-1.3.14.exe</strong> (installer) or <strong>TabFleet-1.3.14.exe</strong> (portable).</li>
-        <li>Run it. SmartScreen may warn; click <strong>More info → Run anyway</strong>.</li>
-        <li>The installer puts TabFleet in <code>%LocalAppData%\Programs\TabFleet</code>; the portable version runs from wherever you drop it.</li>
-      </ol>
-
-      <aside class="callout">
-        <strong>Auto-update</strong> ships inside the app. Settings → <em>Download updates automatically</em> and <em>Notify me when an update is available</em> are on by default; new releases install on next restart.
-      </aside>
-    </section>
-
-    <section id="first-session">
-      <h2>2. Your first session</h2>
-      <ol>
-        <li><strong>Launch screen</strong> → pick a Proxy source:
-          <ul>
-            <li><em>Direct</em> — no proxy, your home IP.</li>
-            <li><em>Proxy list</em> — paste <code>host:port[:user:pass]</code> lines.</li>
-            <li><em>Rotating gateway</em> — a provider with sticky sessions (<code>{session}</code>, <code>{country}</code> tokens).</li>
-            <li><em>Remote list</em> — a URL that returns a plain-text proxy list (bearer-authenticated).</li>
-          </ul>
-        </li>
-        <li>Pick an <strong>account group</strong> (if you have more than one). This locks the session to one group so profiles from other groups never mix in.</li>
-        <li>Click <strong>Launch</strong>. If you have a saved session from last time, TabFleet asks whether to restore its tabs or start fresh.</li>
-      </ol>
-      <figure>
-        <img src="assets/screenshots/launcher.png" alt="Launcher with proxy mode picker, group chooser, and proxy list textarea" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<span><code>docs/assets/screenshots/launcher.png</code></span><em>Screenshot: the launcher with Proxy list filled in and a group chosen.</em>'}));">
-        <figcaption>The launch screen. Proxy source + account group are set here and locked for the session.</figcaption>
-      </figure>
-    </section>
-
-    <!-- TABS ---------------------------------------------------------------------------- -->
-    <section id="tabs">
-      <h2>Tabs &amp; multi-select</h2>
-      <p>The tab strip at the top is the heart of TabFleet. Every row is a complete browser session with its own cookies, proxy and profile.</p>
-
-      <div class="feature-grid">
-        <article><h3>Open a new tab</h3><p><kbd>⌘T</kbd> or the <strong>+</strong> button. Plain click smart-assigns a free profile; <strong>Shift-click +</strong> opens the picker instead.</p></article>
-        <article><h3>Drag to reorder</h3><p>Click-hold any tab and drag along the strip. A colored stripe shows the drop position.</p></article>
-        <article><h3>Multi-select</h3><p><kbd>⌘-click</kbd> toggles a tab in the set. <kbd>Shift-click</kbd> selects a range from the focused tab. <kbd>⌘A</kbd> selects every tab.</p></article>
-        <article><h3>Pin</h3><p>Right-click a tab → <strong>Pin</strong>. Pinned tabs stay at the start of the strip and survive bulk close.</p></article>
-        <article><h3>Favicons &amp; order chip</h3><p>Each tab shows the site's favicon and (when attached to an order) a <code>#1234</code> order chip so you never lose track of which tab is which.</p></article>
-        <article><h3>Compact mode</h3><p>Automatic at ≥15 tabs. Slot numbers hide, padding tightens; a 25-tab shift fits in one row on a 13-inch screen.</p></article>
-      </div>
-
-      <h3>What the status strip tells you</h3>
-      <p>At the bottom of the browser window:</p>
-      <pre class="screen">🌐 Per-tab proxies · 139.171.45.71:5326 · zvpHs75bDo · 👤 OS 1.24 · 🪟 2 tabs · ✓ 4 selected · ⏱ 2h 14m · 🕘</pre>
-      <ul>
-        <li><strong>Mode</strong> — Per-tab proxies / Shared session.</li>
-        <li><strong>Proxy</strong> — the current tab's proxy IP + username. If some proxies are in cooldown, it also shows <code>· 3 of 25 cooling</code>.</li>
-        <li><strong>Profile</strong> — the current tab's profile.</li>
-        <li><strong>Tab count</strong> and, when multi-select is active, how many are targeted by bulk shortcuts.</li>
-        <li><strong>Session timer</strong> — how long you've been in this session.</li>
-        <li><strong>🕘</strong> — recent messages popover (last 50 notices with timestamps).</li>
-      </ul>
-    </section>
-
-    <!-- GROUPS -------------------------------------------------------------------------- -->
-    <section id="groups">
-      <h2>Tab groups</h2>
-      <p>Shift-click a few tabs → right-click → <strong>Group N tabs…</strong>. A colored chip appears before the group:</p>
-      <pre class="screen">[●Red TM Taylor Swift] [tab 1] [tab 2] [+3]  [●Blue AXS Beyoncé] [tab 4] [tab 5]</pre>
-      <ul>
-        <li><strong>Click the chip</strong> → collapse the group (just the chip + <code>+N</code> count).</li>
-        <li><strong>Right-click the chip</strong> → prompt: <code>rename …</code>, <code>color red|orange|…|brown</code>, <code>collapse</code>, <code>ungroup</code>, <code>close</code>.</li>
-        <li>Right-click any single tab → <strong>Group → New group with this tab</strong> or add to an existing group.</li>
-      </ul>
-      <p>Group membership and collapse state persist with session restore.</p>
-    </section>
-
-    <!-- PROFILES ------------------------------------------------------------------------ -->
-    <section id="profiles">
-      <h2>Profiles &amp; accounts</h2>
-      <p>A profile is one real account: email, password, OTP source, card(s), address, favorites, custom resolvers. Open <strong>⌘⇧O</strong> for the Profiles panel.</p>
-
-      <h3>Favorites in the toolbar</h3>
-      <p>Mark a profile favorite in the editor (★). It appears as a colored chip between the Clear button and Orders. One click opens a new tab pre-assigned to that profile.</p>
-
-      <h3>Account health</h3>
-      <p>Menubar <strong>Profiles → Check All Account Logins</strong>. TabFleet probes each profile's home URL through its own session with cookies and sniffs for signed-in markers. Results show up as green / red / grey dots next to profile names in the picker.</p>
-
-      <h3>Encrypted profile fields</h3>
-      <p>Card number, CVV, expiry, password and OTP never land on the system clipboard as plaintext. Copy fires AES-256-GCM, writes <code>TF~&lt;base64&gt;</code> to the clipboard, and the preload decrypts on paste inside any TabFleet tab. Pasting anywhere else (Terminal, Notes, Chrome) gives gibberish.</p>
-
-      <h3>Autofill chain</h3>
-      <p>Right-click a tab → <strong>Autofill From Profile</strong> (<kbd>⌘⇧F</kbd>) fills matching fields on the current page. The resolver syntax follows Jancy's <code>field=resolver:args</code> convention per site, so TextChest, Automatiq, static values and more work out of the box.</p>
-    </section>
-
-    <!-- PROXIES ------------------------------------------------------------------------- -->
-    <section id="proxies">
-      <h2>Proxy pool</h2>
-      <p>TabFleet treats proxies as a living pool: new tabs pull from it in round-robin order, failures put a proxy on 5-minute cooldown, and the <strong>Check Pool &amp; Remove Flagged IPs</strong> menu action scores every proxy against ipquery.io and drops the datacenter/VPN/high-risk ones from the saved list.</p>
-      <h3>What TabFleet does automatically</h3>
-      <ul>
-        <li>Each new tab (per-tab mode) gets the next free pool proxy.</li>
-        <li><strong>New IP</strong> on a tab rotates to a different proxy, round-robin across every <em>free</em> proxy.</li>
-        <li>Any <code>-130 PROXY_CONNECTION_FAILED</code>, <code>-101 CONNECTION_RESET</code>, timeout or <code>407</code> auth failure cools that proxy down for 5 minutes.</li>
-        <li>WebRTC IP handling is forced to <code>disable_non_proxied_udp</code> on proxied tabs — your real LAN IP never leaks.</li>
-      </ul>
-      <h3>Check Pool &amp; Remove Flagged IPs…</h3>
-      <p>Menubar <strong>Proxy → Check Pool…</strong>. TabFleet opens an in-memory session per proxy, hits <code>api.ipquery.io</code> through it, reads <code>is_proxy / is_vpn / is_tor / is_datacenter</code> and <code>risk_score</code>, and removes the flagged ones from the saved list + unpins any profile that was pinned to them.</p>
-    </section>
-
-    <!-- PLAYBOOKS ----------------------------------------------------------------------- -->
-    <section id="playbooks">
-      <h2>Playbooks (record once, replay forever)</h2>
-      <p>The headline feature. Record a drop flow by hand once, then replay it against any order with section/row/seats substituted automatically. Open with <strong>📜 Playbooks</strong> in the toolbar.</p>
-
-      <figure>
-        <img src="assets/screenshots/playbooks.png" alt="Playbooks modal with recording panel at the top, Event URL + Section/Row/Low/High/Quantity inputs, and a list of saved playbooks" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'shot-placeholder', innerHTML: '<span><code>docs/assets/screenshots/playbooks.png</code></span><em>Screenshot: the Playbooks modal.</em>'}));">
-        <figcaption>The Playbooks modal: recording status, event URL input, order fields, saved list.</figcaption>
-      </figure>
-
-      <h3>1. Record a flow</h3>
-      <ol>
-        <li>Open the event page in a tab.</li>
-        <li>Click <strong>🔴 Record</strong> in the toolbar (red pulsing banner at top of pages confirms).</li>
-        <li>Do the flow manually: pick the section, click seats, click Reserve, log in, go through to the step before payment.</li>
-        <li>Click <strong>⏹ Stop</strong>. TabFleet auto-saves as a playbook named <code>Playbook &lt;timestamp&gt;</code> and opens the Playbooks panel with the new entry at the top.</li>
-      </ol>
-
-      <h3>2. Replay against any order</h3>
-      <ol>
-        <li>Open <strong>📜 Playbooks</strong>.</li>
-        <li>(Optional) paste an <strong>Event URL</strong> — a new tab opens on that URL first.</li>
-        <li>Fill <strong>Section · Row · Low seat · High seat · Quantity</strong>. These replace the recorded values when the playbook runs.</li>
-        <li>Click <strong>▶ Run on current tab</strong> next to the playbook you want.</li>
-        <li>A blue banner shows <em>step 1/32 — click: Section 108</em>, advancing every ~900 ms + DOM-settle time.</li>
-      </ol>
-
-      <h3>Seat range expansion</h3>
-      <p>If Low ≠ High, the recorded "click one seat" action is expanded to one click per seat in <code>[low..high]</code> so buddy pairs and groups get fully carted. Each click uses the SVG-aware pointer + mouse + click dispatch so React registers them.</p>
-
-      <h3>Resilience</h3>
-      <ul>
-        <li><strong>Element not immediately found</strong> → waits up to 12 s, status shows <em>"waiting for Section 108…"</em>, then retries.</li>
-        <li><strong>Navigation mid-replay</strong> (login redirect, payment page) → the replayer bails cleanly, re-injects on <code>did-navigate</code>, continues from the next step.</li>
-        <li><strong>Rename</strong> any playbook inline (click <em>Rename</em> → type → Enter). <strong>🗑</strong> deletes.</li>
-      </ul>
-
-      <aside class="callout">
-        <strong>Where playbooks live:</strong> <code>~/Library/Application Support/TabFleet/playbooks/</code> on macOS, <code>%APPDATA%\TabFleet\playbooks\</code> on Windows. Portable JSON — copy them between machines.
-      </aside>
-    </section>
-
-    <!-- ORDERS -------------------------------------------------------------------------- -->
-    <section id="orders">
-      <h2>Orders panel</h2>
-      <p>Open with <strong>⌘⇧U</strong> or the <strong>Orders</strong> toolbar button. Pulls the latest invoiced orders from Automatiq Sync (configured in Settings).</p>
-      <h3>Filter chips</h3>
-      <p>At the top: <code>Open · New · Working · Handled · All</code> with live counts. Clicking an order's <strong>Search</strong> button auto-promotes it to <em>Working</em>; <strong>✓ Done</strong> marks <em>Handled</em>. Dot on each row cycles through states.</p>
-
-      <h3>Open event URL directly</h3>
-      <p>When an order carries <code>event_url</code> / <code>primary_marketplace_url</code> / <code>ticket_url</code>, the detail pane shows <strong>Open event on &lt;site&gt;</strong> — one click lands on the event page instead of hopping through TM search.</p>
-
-      <h3>Auto-open new invoiced orders</h3>
-      <p>Settings → <strong>Auto-open new invoiced orders</strong>. Every 2 minutes TabFleet polls Automatiq; new orders open a search tab automatically (with the order's details in the tab note, so a seat-match overlay can read them later).</p>
-    </section>
-
-    <!-- BULK ---------------------------------------------------------------------------- -->
-    <section id="bulk">
-      <h2>Bulk shortcuts across selected tabs</h2>
-      <p>Multi-select N tabs, then fire any of these — they act on every selected tab at once.</p>
-      <table class="shortcuts-table">
-        <thead><tr><th>Keys</th><th>What it does</th></tr></thead>
-        <tbody>
-          <tr><td><kbd>⌘A</kbd></td><td>Select every open tab</td></tr>
-          <tr><td><kbd>⌘1</kbd></td><td>Auto-login (navigate to profile URL + fill credentials + submit, with OTP support)</td></tr>
-          <tr><td><kbd>⌘2</kbd></td><td>Autofill + submit the current form</td></tr>
-          <tr><td><kbd>⌘3</kbd></td><td>Go home (profile home or start URL)</td></tr>
-          <tr><td><kbd>Shift+Enter</kbd> in address bar</td><td>Broadcast the URL to every selected tab</td></tr>
-          <tr><td><kbd>⌘⇧M</kbd></td><td>Mute every tab (toggle)</td></tr>
-        </tbody>
-      </table>
-      <p>Right-click any selected tab → bulk section at the top of the menu:</p>
-      <pre class="screen">4 tabs selected
-  Group 4 tabs…
-  Clear cookies on 4
-  Burn IP on 4
-  Clear &amp; New IP on 4
-  Open sign-in page on 4
-  Auto-Login on 4
-  Go Home on 4
-  Close 4 tabs</pre>
-      <p>The <strong>🧹 Clear</strong> button in the toolbar also adapts — it says <strong>Clear tab</strong> when nothing's multi-selected, <strong>Clear 4 tabs</strong> when 4 are selected, and runs the cookie-wipe + reload on every selected tab.</p>
-    </section>
-
-    <!-- WATCH --------------------------------------------------------------------------- -->
-    <section id="watch">
-      <h2>URL watch &amp; attention alerts</h2>
-      <p>Right-click a tab → <strong>Watch for URL…</strong>. Enter a substring (<code>checkout</code>) or a regex (<code>/order/\d+/i</code>). When the tab navigates to a matching URL:</p>
-      <ul>
-        <li>A system notification fires (clickable to focus the tab).</li>
-        <li>The tab pulses accent-blue in the strip.</li>
-        <li>The status strip's attention counter rises: <code>⚡ 1 need you</code>.</li>
-        <li>Clicking the tab clears the attention flag.</li>
-      </ul>
-      <p>Timers work similarly: right-click → <strong>Timer → 5 min</strong>. When time's up, the tab pulses burn-red and a system notification fires.</p>
-    </section>
-
-    <!-- PAGES EXPLAINED ----------------------------------------------------------------- -->
-    <section id="pages">
-      <h2>Every page explained</h2>
-      <p>What each modal / panel is for and how to open it.</p>
-
-      <div class="page-list">
-        <article>
-          <h3>Launch screen</h3>
-          <p>The first thing you see. Proxy source + account group + tab count. Locks for the session; to change proxy mode you must End Session.</p>
-        </article>
-
-        <article>
-          <h3>Profiles panel <span class="kbd">⌘⇧O</span></h3>
-          <p>The side panel. Search / list of profiles filtered by active group. Click a profile to assign it to the current tab. Each row shows the account-health dot and tab-usage count.</p>
-        </article>
-
-        <article>
-          <h3>Profile editor</h3>
-          <p>Add / edit a profile: name, email, password, OTP source, address, cards, custom resolvers. Star = favorite (shows as a toolbar chip).</p>
-        </article>
-
-        <article>
-          <h3>Orders <span class="kbd">⌘⇧U</span></h3>
-          <p>Last 25 invoiced orders from Automatiq. Filter chips at top. Click <strong>Search</strong> on an order to open its event-search tab with order details in the note.</p>
-        </article>
-
-        <article>
-          <h3>Playbooks <span class="kbd">📜 Playbooks</span> button</h3>
-          <p>Recording status at the top; Event URL + Section/Row/Low/High/Quantity inputs; list of saved playbooks with Run / Rename / Delete per row.</p>
-        </article>
-
-        <article>
-          <h3>Settings <span class="kbd">⌘,</span></h3>
-          <p>Updates, notifications, theme, <em>Set the clock to the proxies' timezone</em>, <em>Auto-open new invoiced orders</em>, Automatiq Sync credentials.</p>
-        </article>
-
-        <article>
-          <h3>Keyboard shortcuts <span class="kbd">?</span></h3>
-          <p>Every rebindable action listed. Click any chip to rebind — press the new combo, Delete to clear to default, Reset defaults button at the top.</p>
-        </article>
-
-        <article>
-          <h3>Jump to tab <span class="kbd">⌘P</span></h3>
-          <p>Fuzzy palette. Type to filter by title / host / profile; ↑↓ highlight; Enter to switch.</p>
-        </article>
-
-        <article>
-          <h3>Recent messages popover</h3>
-          <p>🕘 button on the status strip. Last 50 notices with relative timestamps.</p>
-        </article>
-
-        <article>
-          <h3>Groups dialog</h3>
-          <p>The current account group with option to rename or restart TabFleet to switch group.</p>
-        </article>
-      </div>
-    </section>
-
-    <!-- SHORTCUTS ----------------------------------------------------------------------- -->
-    <section id="shortcuts">
-      <h2>All keyboard shortcuts</h2>
-      <p>Everything is rebindable from <strong>?</strong>. Click a chip, press the new combo. The defaults:</p>
-
-      <h3>Navigation</h3>
-      <table class="shortcuts-table">
-        <tr><td><kbd>⌘R</kbd> / <kbd>Ctrl+R</kbd></td><td>Reload tab</td></tr>
-        <tr><td><kbd>⌘⇧H</kbd></td><td>Go home</td></tr>
-        <tr><td><kbd>⌘L</kbd></td><td>Focus address bar</td></tr>
-        <tr><td><kbd>⌘P</kbd></td><td>Jump to tab palette</td></tr>
-        <tr><td><kbd>⌘[</kbd> / <kbd>Alt+Left</kbd></td><td>Back</td></tr>
-        <tr><td><kbd>⌘]</kbd> / <kbd>Alt+Right</kbd></td><td>Forward</td></tr>
-        <tr><td><kbd>Ctrl+Tab</kbd></td><td>Next tab</td></tr>
-        <tr><td><kbd>Ctrl+⇧Tab</kbd></td><td>Previous tab</td></tr>
-        <tr><td><kbd>⌘⇧1</kbd> … <kbd>⌘⇧9</kbd></td><td>Jump to tab 1…9 by slot</td></tr>
-      </table>
-
-      <h3>Multi-tab</h3>
-      <table class="shortcuts-table">
-        <tr><td><kbd>⌘1</kbd></td><td>Auto-login on every selected tab</td></tr>
-        <tr><td><kbd>⌘2</kbd></td><td>Autofill &amp; submit on every selected tab</td></tr>
-        <tr><td><kbd>⌘3</kbd></td><td>Go home on every selected tab</td></tr>
-        <tr><td><kbd>⌘A</kbd></td><td>Select every tab</td></tr>
-        <tr><td><kbd>Shift</kbd>-click / <kbd>⌘</kbd>-click a tab</td><td>Range / toggle multi-select</td></tr>
-        <tr><td><kbd>Shift+Enter</kbd> in address bar</td><td>Broadcast URL to selected tabs</td></tr>
-      </table>
-
-      <h3>Tabs</h3>
-      <table class="shortcuts-table">
-        <tr><td><kbd>⌘T</kbd></td><td>New tab (Shift+click + = pick profile manually)</td></tr>
-        <tr><td><kbd>⌘W</kbd></td><td>Close current tab</td></tr>
-        <tr><td><kbd>⌘⇧T</kbd></td><td>Reopen last closed tab</td></tr>
-        <tr><td>Drag a tab</td><td>Reorder in the strip</td></tr>
-      </table>
-
-      <h3>Proxy / audio</h3>
-      <table class="shortcuts-table">
-        <tr><td><kbd>⌘B</kbd></td><td>Burn IP and reload (current tab)</td></tr>
-        <tr><td><kbd>⌘⇧P</kbd></td><td>Switch tab to local / proxy</td></tr>
-        <tr><td><kbd>⌘⇧M</kbd></td><td>Mute every tab (toggle)</td></tr>
-      </table>
-
-      <h3>Profiles / autofill</h3>
-      <table class="shortcuts-table">
-        <tr><td><kbd>⌘⇧F</kbd></td><td>Autofill current form</td></tr>
-        <tr><td><kbd>⌘⇧Enter</kbd></td><td>Autofill &amp; click next</td></tr>
-        <tr><td><kbd>⌘⇧O</kbd></td><td>Profiles panel + search</td></tr>
-        <tr><td><kbd>⌘⇧U</kbd></td><td>Open Orders</td></tr>
-      </table>
-
-      <h3>Other</h3>
-      <table class="shortcuts-table">
-        <tr><td><kbd>⌘\</kbd></td><td>Toggle side panel</td></tr>
-        <tr><td><kbd>⌘⇧T</kbd> inside the Note editor</td><td>Insert current time (queue log)</td></tr>
-        <tr><td><kbd>?</kbd></td><td>Open the shortcuts sheet (editable)</td></tr>
-      </table>
-    </section>
-
-    <!-- STEALTH ------------------------------------------------------------------------- -->
-    <section id="stealth">
-      <h2>Fingerprint stealth</h2>
-      <p>TabFleet patches dozens of browser APIs so each tab (identified by its session partition) looks like a distinct real device to anti-bot stacks:</p>
-      <ul>
-        <li><strong>UA + Sec-CH-UA + userAgentData</strong> — scrubbed of <code>Electron/</code> and <code>TabFleet/</code> tokens; brands rewritten to <code>"Chromium", "Google Chrome", "Not=A?Brand"</code>.</li>
-        <li><strong>navigator.webdriver</strong> — returns false with a native-looking getter (toString returns <code>"function get webdriver() { [native code] }"</code> via a Proxy on <code>Function.prototype.toString</code>).</li>
-        <li><strong>window.chrome</strong> — <code>runtime</code>, <code>app</code>, <code>csi</code>, <code>loadTimes</code>, <code>webstore</code> stubs. Also injected into iframe <code>contentWindow</code> so HEADCHR_IFRAME passes.</li>
-        <li><strong>WebGL vendor/renderer</strong> — one of six Apple M1/M2/M3 or Intel strings picked by seed. Real GPU name doesn't leak.</li>
-        <li><strong>Canvas</strong> — <code>fillText</code>/<code>strokeText</code>/<code>fillRect</code> stamp a 1×1 seed-colored pixel; <code>toDataURL</code>/<code>toBlob</code> LSB-noise on a scratch copy. Each profile gets a stable but distinct canvas hash.</li>
-        <li><strong>Font detection</strong> — <code>measureText</code> + <code>getBoundingClientRect</code> + <code>Range.getBoundingClientRect</code> add seeded subpixel noise so font-list hashes differ per profile without breaking layout.</li>
-        <li><strong>AudioContext</strong> — <code>getFloatFrequencyData</code> / <code>getFloatTimeDomainData</code> / <code>getChannelData</code> add inaudible seeded noise.</li>
-        <li><strong>WebRTC</strong> — proxied tabs force <code>disable_non_proxied_udp</code>; the local LAN IP never leaks.</li>
-        <li><strong>Accept-Language</strong> — forced to <code>en-US,en;q=0.9</code>; Chromium's <code>--lang=en-US</code> switch prevents OS-locale leaks.</li>
-        <li><strong>Permissions</strong> — mic / camera / geo / notifications / sensors deny by default so <code>mediaDevices.enumerateDevices()</code> returns empty labels (no <em>"iPhone Microphone"</em> leak).</li>
-      </ul>
-      <p>Verify at <code>https://tls.peet.ws/api/all</code> (JA3/JA4/Akamai HTTP/2 all match stock Chrome), <code>https://browserleaks.com/canvas</code>, <code>/fonts</code>, <code>/webrtc</code>.</p>
-    </section>
-
-    <!-- TROUBLESHOOT -------------------------------------------------------------------- -->
-    <section id="troubleshoot">
-      <h2>Troubleshooting</h2>
-      <dl class="qa">
-        <dt>Right-click doesn't show a menu on the page</dt><dd>Fixed in 1.3.14. On older builds, use ⌘C / ⌘V keyboard shortcuts.</dd>
-
-        <dt>Tabs won't drag to reorder</dt><dd>Fixed in 1.3.14 — switched from HTML5 drag to pointer events. Hover a tab and the cursor turns into a grab hand.</dd>
-
-        <dt>Bulk ⌘1 only fires on one tab</dt><dd>Make sure the status strip at the bottom shows <code>✓ N selected</code>. If it doesn't, your multi-selection cleared — ⌘A to select all, or Shift-click a range.</dd>
-
-        <dt>Playbook stops after a few steps</dt><dd>The replayer waits 12 s for a target to appear before giving up. If TM's DOM changed, re-record the playbook. The banner's status line (<em>step X: Section 108 missing</em>) tells you which element it couldn't find.</dd>
-
-        <dt>Profile shows red dot in picker</dt><dd>Account is logged out. Run <strong>Profiles → Check All Account Logins</strong> again, or <strong>⌘1</strong> on a tab assigned to that profile to re-login.</dd>
-
-        <dt>Proxy count keeps dropping</dt><dd>Proxies that fail (connection refused, 407, timeouts) go on a 5-minute cooldown. If many drop at once, run <strong>Proxy → Check Pool &amp; Remove Flagged IPs…</strong> to prune the dead ones permanently.</dd>
-
-        <dt>Clipboard shows <code>TF~…</code> gibberish</dt><dd>That's a feature. TabFleet encrypts card/password/CVV copies so they only decrypt inside TabFleet. Paste it into any TabFleet tab's input and you'll see the real value.</dd>
-
-        <dt>macOS says the app is damaged</dt><dd>Builds aren't code-signed. Right-click TabFleet.app → Open (not double-click) → confirm. macOS remembers after that.</dd>
-      </dl>
-    </section>
-
-    <footer class="site-footer">
-      <p>TabFleet — multi-account browser for drops. <a href="https://github.com/abdulsamad2/tab_fleet">Source on GitHub</a>. Built on Electron 45.</p>
-    </footer>
-
-  </main>
-</div>
+    <small>© 2026 TabFleet. For professional use only.</small>
+  </div>
+</footer>
 
 <script src="assets/script.js"></script>
 </body>

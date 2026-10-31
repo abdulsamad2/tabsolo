@@ -1,29 +1,33 @@
-# TabFleet documentation site
+# TabFleet marketing site
 
-Static single-page docs served from this `docs/` folder via GitHub Pages.
+Product landing page for TabFleet. Lives at `https://abdulsamad2.github.io/tab_fleet/` via GitHub Pages (Settings → Pages → `main` / `/docs`).
 
-## Enabling GitHub Pages
+## Editing content
 
-1. Push this folder to the `main` branch.
-2. Repo → **Settings → Pages**.
-3. Under **Build and deployment**:
-   - **Source**: Deploy from a branch
-   - **Branch**: `main` · Folder: `/docs`
-4. Save. The site goes live at `https://abdulsamad2.github.io/tab_fleet/` within a minute.
+Everything is in `index.html` — the hero copy, pricing numbers, FAQ answers, contact email/Telegram handle. No build step; edit the HTML, commit, push, done.
+
+Common edits:
+
+- **Pricing numbers** — search `$79`, `$199`, change inline.
+- **Contact** — `sales@tabfleet.app` and `https://t.me/tabfleet` placeholders — replace with your real sales email + Telegram.
+- **Version badge** — `Version 1.3.14` in the hero eyebrow.
+- **Stats row** — `20+`, `< 3s`, `1-click`, `100%` under the hero.
 
 ## Adding real screenshots
 
-Each `<figure>` in `index.html` uses an `<img>` that falls back to a dashed placeholder when the image is missing. To replace a placeholder with a real screenshot:
+Each `<img>` has a fallback that renders a dashed placeholder if the file is missing. Drop PNGs at these paths to replace them:
 
-| Placeholder slot    | Drop a PNG at                             | What to capture                                   |
-|---------------------|-------------------------------------------|---------------------------------------------------|
-| Hero                | `docs/assets/screenshots/hero.png`        | Main browser view with 6+ tabs + status strip     |
-| Launcher            | `docs/assets/screenshots/launcher.png`    | Launcher with proxy source + account group filled |
-| Playbooks modal     | `docs/assets/screenshots/playbooks.png`   | Playbooks panel with Event URL + saved playbooks  |
+| Slot              | Path                                                 | Suggested capture                                           |
+|-------------------|------------------------------------------------------|-------------------------------------------------------------|
+| Hero              | `docs/assets/screenshots/hero.png`                   | Main window with 8+ tabs, status strip, side panel          |
+| Launcher          | `docs/assets/screenshots/launcher.png`               | Proxy source + account group pickers                        |
+| Tabs              | `docs/assets/screenshots/tabs.png`                   | Tab strip with groups, order chips, multi-select highlighted |
+| Playbooks         | `docs/assets/screenshots/playbooks.png`              | Playbooks modal with saved playbooks list                   |
+| Bulk shortcuts    | `docs/assets/screenshots/bulk-shortcuts.png`         | Right-click menu showing bulk section                       |
+| Bulk (feature)    | `docs/assets/screenshots/bulk.png`                   | Multi-select highlighted on tab strip                       |
+| Proxies (feature) | `docs/assets/screenshots/proxies.png`                | Status strip with proxy / cooldown                          |
 
-Suggested dimensions: 2000×1200 at 2x retina, saved as optimised PNG (`pngquant --speed 1 --quality 70-85`).
-
-Add more slots simply by duplicating a `<figure>` in `index.html` and referencing a new file under `docs/assets/screenshots/`.
+Suggested size: 2000×1200 at 2x retina, optimized with `pngquant --quality 70-85`.
 
 ## Local preview
 
@@ -33,10 +37,10 @@ python3 -m http.server 8080
 open http://localhost:8080
 ```
 
-## Files
+## File map
 
-- `index.html` — all content on one page.
-- `assets/styles.css` — dark theme matching TabFleet's visual language.
-- `assets/script.js` — scrollspy + mobile sidebar toggle.
+- `index.html` — landing page (hero → features → how-it-works → use cases → shortcuts → pricing → FAQ → contact).
+- `assets/styles.css` — dark theme, gradient hero, bento grid, pricing cards.
+- `assets/script.js` — nav scrollspy.
 - `assets/icon.svg` — favicon.
-- `assets/screenshots/` — screenshot slots (optional; placeholders render if empty).
+- `assets/screenshots/` — optional screenshot slots (placeholders render if missing).
