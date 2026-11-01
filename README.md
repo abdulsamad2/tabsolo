@@ -90,5 +90,4 @@ To publish an update that installed apps pick up:
 
 ### Website
 
-The landing page lives in [`docs/`](docs/) and is served by GitHub Pages from the `main` branch's
-`/docs` folder. It's plain HTML and CSS; open `docs/index.html` in a browser to preview it.
+The website (tabsolo.com) is a separate Next.js project, deployed on Vercel.
