@@ -5,9 +5,9 @@ compatibility_flags = ["nodejs_compat"]
 
 # Set these before `wrangler deploy`:
 #   wrangler secret put ADMIN_TOKEN
-#   wrangler secret put HMAC_SECRET
+#   wrangler secret put TOKEN_SIGNING_JWK
 # ADMIN_TOKEN  — bearer token for the admin endpoints (/admin/licenses, …)
-# HMAC_SECRET  — signs the activation tokens the client caches
+# TOKEN_SIGNING_JWK — Ed25519 private key (JWK) that signs the tokens the client caches; the app holds the public half
 
 [[d1_databases]]
 binding = "DB"

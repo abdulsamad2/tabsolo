@@ -3780,13 +3780,14 @@ function createWindow() {
 // A valid license is required before the main window opens. If none is cached, a login window
 // takes the user through activation; cached tokens let the app launch offline for up to 7 days.
 // Telemetry is a thin event stream — fire-and-forget, batched to disk, flushed to the API every
-// 60s. Set TABSOLO_API_BASE in the env or settings.apiBase to override the server URL.
+// 60s. TABSOLO_API_BASE overrides the server URL when running from source.
 
 let licenseClient = null;
 let telemetryClient = null;
 
 function getLicenseApiBase() {
-  return process.env.TABSOLO_API_BASE || settings?.apiBase || 'https://tabsolo-api.abdulsamad-laghari1.workers.dev';
+  // Source runs only: in an installed build this would let a fake server approve any key.
+  return (!app.isPackaged && process.env.TABSOLO_API_BASE) || 'https://tabsolo-api.abdulsamad-laghari1.workers.dev';
 }
 
 function initLicenseAndTelemetry() {
@@ -3829,6 +3830,8 @@ function showLoginWindow({ reason = 'no_license' } = {}) {
       loginWin.webContents.once('did-finish-load', () => {
         const msg = reason === 'revoked' ? 'This license was revoked. Please activate a different key.'
                   : reason === 'device_revoked' ? 'This device was removed from the license. Re-activate to continue.'
+                  : reason === 'plan_ended' ? 'The free beta has ended. Enter a paid license key to keep using TabSolo.'
+                  : reason === 'device_mismatch' ? 'This license was activated on a different computer. Enter your key to activate it here.'
                   : reason === 'expired' ? 'This license has expired. Activate a renewed key.'
                   : reason === 'expired_offline' ? 'Offline grace period expired. Reconnect to re-validate.'
                   : null;
@@ -3861,10 +3864,13 @@ ipcMain.handle('license:info', () => ({
   deviceId: licenseClient?.deviceId || null,
 }));
 
-ipcMain.handle('license:deactivate', () => {
-  licenseClient?.deactivate();
+ipcMain.handle('license:deactivate', async () => {
+  const result = await licenseClient.deactivate();
+  if (!result.ok) return result;
   telemetryClient?.trackEvent('license.deactivated');
-  return { ok: true };
+  // Back to the license gate.
+  setImmediate(() => { app.relaunch(); app.quit(); });
+  return result;
 });
 
 app.whenReady().then(async () => {

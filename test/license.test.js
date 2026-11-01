@@ -1,67 +1,124 @@
 'use strict';
 
-// Guards the license token flow: the client peeks at tokens for the offline grace check, and the
-// server signs/verifies them with HMAC-SHA-256 (Workers crypto.subtle, same APIs Node exposes).
-// If this file flakes, licensing is already broken.
+// Guards the license token flow: the server signs tokens with Ed25519 and the app checks them with
+// the public key, so the free beta can be ended and a token can't be edited to outlive it.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { webcrypto } = require('node:crypto');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { createLicenseClient, readToken } = require('../src/license/license');
 
-const b64url = {
-  encode: (bytes) => Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
-};
+const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
 
-async function importHmacKey(secret, usage) {
-  return webcrypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, [usage]);
+function sign(payload, key = privateKey) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${body}.${crypto.sign(null, Buffer.from(body), key).toString('base64url')}`;
 }
 
-async function sign(secret, payload) {
-  const body = b64url.encode(new TextEncoder().encode(JSON.stringify(payload)));
-  const key = await importHmacKey(secret, 'sign');
-  const sig = await webcrypto.subtle.sign('HMAC', key, new TextEncoder().encode(body));
-  return `${body}.${b64url.encode(new Uint8Array(sig))}`;
+function setup() {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tabsolo-license-'));
+  const client = createLicenseClient({ dataDir, appVersion: 'test', publicKey });
+  const file = path.join(dataDir, 'license.json');
+  const save = (token) => fs.writeFileSync(file, JSON.stringify({ token, licenseKey: 'K', plan: 'beta' }));
+  return { client, file, save };
 }
+const hour = 3_600_000;
+const claimsFor = (client, extra = {}) => ({ k: 'K', d: client.deviceId, p: 'beta', iat: Date.now(), exp: Date.now() + hour, ...extra });
+const networkDown = (t) => t.mock.method(globalThis, 'fetch', async () => { throw new Error('offline'); });
+const serverSays = (t, status, body) => t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(body), { status }));
 
-test('peekToken decodes a valid token and reads exp', async () => {
-  const { peekToken } = require('../src/license/license');
-  const token = await sign('secret', { k: 'TF-ABCD', d: 'dev1', p: 'solo', iat: 1, exp: 2 });
-  const claims = peekToken(token);
-  assert.equal(claims.k, 'TF-ABCD');
-  assert.equal(claims.exp, 2);
-});
-
-test('peekToken rejects tokens without an exp or a body', () => {
-  const { peekToken } = require('../src/license/license');
-  assert.equal(peekToken('nope'), null);
-  assert.equal(peekToken(''), null);
-  const noExp = `${b64url.encode(Buffer.from(JSON.stringify({ k: 'x' })))}.whatever`;
-  assert.equal(peekToken(noExp), null);
-});
-
-test('a tampered signature fails HMAC verification', async () => {
-  const token = await sign('secret', { k: 'TF-ABCD', d: 'dev1', p: 'solo', iat: 1, exp: 2 });
+test('only a token signed by our key can be read', () => {
+  const token = sign({ k: 'K', d: 'dev1', iat: 1, exp: 2 });
+  assert.equal(readToken(token, publicKey).k, 'K');
   const [body, sig] = token.split('.');
-  const flippedSig = sig.slice(0, -1) + (sig.endsWith('A') ? 'B' : 'A');
-  const key = await importHmacKey('secret', 'verify');
-  const sigBytes = Uint8Array.from(Buffer.from(flippedSig.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((flippedSig.length + 3) % 4), 'base64'));
-  const ok = await webcrypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(body));
-  assert.equal(ok, false);
+  const edited = Buffer.from(JSON.stringify({ k: 'K', d: 'dev1', iat: 1, exp: 9e15 })).toString('base64url');
+  assert.equal(readToken(`${edited}.${sig}`, publicKey), null, 'edited expiry');
+  assert.equal(readToken(`${body}.${sig.slice(0, -2)}AA`, publicKey), null, 'edited signature');
+  assert.equal(readToken(sign({ exp: 2 }, crypto.generateKeyPairSync('ed25519').privateKey), publicKey), null, 'another key');
+  assert.equal(readToken(sign({ k: 'no exp' }), publicKey), null);
+  assert.equal(readToken('nope', publicKey), null);
+  assert.equal(readToken('', publicKey), null);
 });
 
-test('a tampered body fails HMAC verification', async () => {
-  const token = await sign('secret', { k: 'TF-ABCD', d: 'dev1', p: 'solo', iat: 1, exp: 2 });
-  const [body, sig] = token.split('.');
-  const flippedBody = body.slice(0, -1) + (body.endsWith('A') ? 'B' : 'A');
-  const key = await importHmacKey('secret', 'verify');
-  const sigBytes = Uint8Array.from(Buffer.from(sig.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((sig.length + 3) % 4), 'base64'));
-  const ok = await webcrypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(flippedBody));
-  assert.equal(ok, false);
+test('offline, a valid token works until it expires and an edited one never does', async (t) => {
+  networkDown(t);
+  const { client, save } = setup();
+  save(sign(claimsFor(client)));
+  assert.equal((await client.validateAtStartup()).source, 'cache');
+
+  save(sign(claimsFor(client, { iat: Date.now() - 2 * hour, exp: Date.now() - hour })));
+  assert.deepEqual(await client.validateAtStartup(), { ok: false, reason: 'expired_offline' });
+
+  save(sign(claimsFor(client, { iat: Date.now() + 2 * 86_400_000, exp: Date.now() + 3 * 86_400_000 })));
+  assert.deepEqual(await client.validateAtStartup(), { ok: false, reason: 'expired_offline' }, 'clock set back before the token');
+
+  const [, sig] = sign(claimsFor(client)).split('.');
+  const edited = Buffer.from(JSON.stringify(claimsFor(client, { exp: Date.now() + 1e12 }))).toString('base64url');
+  save(`${edited}.${sig}`);
+  assert.deepEqual(await client.validateAtStartup(), { ok: false, reason: 'invalid_token' });
 });
 
-// Finding 16: pin the playbook escaping. Order fields flow into executeJavaScript via
-// JSON.stringify, so any `"</script>` or similar must stay escaped. A refactor that drops the
-// stringify or interpolates values with ${…} will trip this test immediately.
+test('when the plan has ended the server refusal removes the license', async (t) => {
+  serverSays(t, 403, { ok: false, error: 'plan_ended' });
+  const { client, file, save } = setup();
+  save(sign(claimsFor(client)));
+  assert.deepEqual(await client.validateAtStartup(), { ok: false, reason: 'plan_ended' });
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('a fake server cannot approve a license', async (t) => {
+  const { client, file, save } = setup();
+  const forged = sign(claimsFor(client, { exp: Date.now() + 1e12 }), crypto.generateKeyPairSync('ed25519').privateKey);
+  serverSays(t, 200, { ok: true, token: forged, plan: 'pro' });
+  assert.equal((await client.activate('K')).ok, false);
+  assert.equal(fs.existsSync(file), false);
+
+  const real = sign(claimsFor(client));
+  save(real);
+  await client.validateAtStartup();
+  assert.equal(JSON.parse(fs.readFileSync(file)).token, real, 'the forged token was not saved');
+});
+
+test('a license file copied from another computer is refused without using it', async (t) => {
+  const calls = [];
+  const { client, file, save } = setup();
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ ok: true, token: sign(claimsFor(client)), plan: 'beta' }), { status: 200 });
+  });
+  save(sign(claimsFor(client)));
+  assert.equal((await client.validateAtStartup()).ok, true);
+  assert.equal(calls[0].deviceId, client.deviceId, 'the server is told which computer is asking');
+
+  save(sign(claimsFor(client, { d: 'another-computer' })));
+  assert.deepEqual(await client.validateAtStartup(), { ok: false, reason: 'device_mismatch' });
+  assert.equal(calls.length, 1, 'no server call for a copied file');
+  assert.equal(fs.existsSync(file), false, 'the copied file is removed');
+});
+
+test('deactivating frees the slot and keeps the license if the server can not be reached', async (t) => {
+  const { client, file, save } = setup();
+  save(sign(claimsFor(client)));
+  const down = networkDown(t);
+  assert.equal((await client.deactivate()).ok, false);
+  assert.equal(fs.existsSync(file), true, 'still licensed: the slot was not freed');
+  down.mock.restore();
+  serverSays(t, 200, { ok: true });
+  assert.deepEqual(await client.deactivate(), { ok: true });
+  assert.equal(fs.existsSync(file), false);
+  assert.equal((await client.deactivate()).error, 'no_license');
+});
+
+test('the computer id ignores the network adapter when a hardware id exists', () => {
+  const { fingerprint } = require('../src/license/device');
+  assert.equal(fingerprint('darwin', 'arm64', 'UUID', 'aa:aa'), fingerprint('darwin', 'arm64', 'UUID', 'bb:bb'));
+  assert.notEqual(fingerprint('darwin', 'arm64', 'UUID-1', 'aa'), fingerprint('darwin', 'arm64', 'UUID-2', 'aa'));
+  assert.notEqual(fingerprint('linux', 'x64', null, 'aa:aa'), fingerprint('linux', 'x64', null, 'bb:bb'));
+});
+
 // The regex that gates the seat-match overlay injection in src/main.js:1174. Mirror it here so
 // a future edit that reopens the TLD branch (back to `[a-z.]+`) is caught before it ships.
 const TICKETMASTER_URL = /^https:\/\/(www\.)?ticketmaster\.(com|ca|co\.uk|de|fr|es|it|nl|com\.au|co\.nz|com\.mx)\/(event|resale|exchange|t)\//i;

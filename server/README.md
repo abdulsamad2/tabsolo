@@ -11,7 +11,7 @@ npx wrangler login                                # authenticate once
 npx wrangler d1 create tabsolo                   # copy the database_id into wrangler.toml
 npm run db:migrate:prod                           # creates the four tables remotely
 npx wrangler secret put ADMIN_TOKEN               # paste a long random string
-npx wrangler secret put HMAC_SECRET               # paste another long random string
+npx wrangler secret put TOKEN_SIGNING_JWK         # Ed25519 private key as JWK; put its public x in src/license/license.js
 npm run deploy                                    # live at https://tabsolo-api.<account>.workers.dev
 ```
 

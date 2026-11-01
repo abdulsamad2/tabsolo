@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('fleet', {
   onProfilesImported: (listener) => ipcRenderer.on('profiles-imported', (_event, result) => listener(result)),
   onOpenSheetImport: (listener) => ipcRenderer.on('open-sheet-import', () => listener()),
   onUpdateStatus: (listener) => ipcRenderer.on('update-status', (_event, info) => listener(info)),
+  getLicenseInfo: () => ipcRenderer.invoke('license:info'),
+  deactivateLicense: () => ipcRenderer.invoke('license:deactivate'),
   getUpdateInfo: () => ipcRenderer.invoke('update:get-info'),
   checkForUpdate: () => ipcRenderer.invoke('update:check-now'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),

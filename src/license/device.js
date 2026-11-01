@@ -1,10 +1,7 @@
 'use strict';
 
-// Stable per-machine device fingerprint. Derived from hardware identifiers that survive OS
-// reinstalls on the same box: the primary MAC address + hostname + first physical disk serial on
-// Windows / the hardware UUID on macOS. Not perfect — a user can swap network cards, or wipe +
-// change hostname — but good enough for enforcing "one license, one PC" against a casual user.
-// Not meant to defeat a determined attacker: we're licensing, not DRM.
+// Stable per-machine id, used to count a license's computers: the hardware UUID on macOS, MachineGuid
+// on Windows. Stops casual sharing; not meant to defeat a determined attacker.
 
 const { execFileSync } = require('child_process');
 const os = require('os');
@@ -40,19 +37,22 @@ function primaryMacAddress() {
 
 function getDeviceId() {
   if (cached) return cached;
-  // Omits os.hostname(): the ioreg UUID / MachineGuid is already per-machine, and folding in a
-  // user-editable hostname made a rename look like a new device and burn a license slot.
-  const parts = [os.platform(), os.arch()];
-  if (process.platform === 'darwin') parts.push(readMacOsUuid() || '');
-  else if (process.platform === 'win32') parts.push(readWindowsMachineGuid() || '');
-  parts.push(primaryMacAddress() || '');
-  const raw = parts.filter(Boolean).join('|');
-  cached = crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
+  const hardwareId = process.platform === 'darwin' ? readMacOsUuid()
+    : process.platform === 'win32' ? readWindowsMachineGuid()
+    : null;
+  cached = fingerprint(os.platform(), os.arch(), hardwareId, primaryMacAddress());
   return cached;
+}
+
+// Each new id uses up a license slot, so it must not change for the same computer: no hostname
+// (user-editable), and the MAC only as a last resort (VPNs and docks add or reorder adapters).
+function fingerprint(platform, arch, hardwareId, mac) {
+  const raw = [platform, arch, hardwareId || mac].filter(Boolean).join('|');
+  return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
 }
 
 function getDeviceLabel() {
   return `${os.platform()} ${os.release()} · ${os.hostname()}`.slice(0, 128);
 }
 
-module.exports = { getDeviceId, getDeviceLabel };
+module.exports = { getDeviceId, getDeviceLabel, fingerprint };

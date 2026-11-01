@@ -11,12 +11,17 @@
 //      device's fingerprint, save the returned token.
 //   3. Periodic /validate every 6h picks up server-side revocations.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { getDeviceId, getDeviceLabel } = require('./device');
 
 const DEFAULT_API_BASE = 'https://tabsolo-api.abdulsamad-laghari1.workers.dev';
 const TOKEN_FILE_BASENAME = 'license.json';
+const TOKEN_PUBLIC_KEY = crypto.createPublicKey({
+  key: { kty: 'OKP', crv: 'Ed25519', x: '9k3xBUvLkCAC-ZWfZz0bHQWhTKcAP1VrO3FCirmELqA' },
+  format: 'jwk',
+});
 
 function tokenFile(dataDir) { return path.join(dataDir, TOKEN_FILE_BASENAME); }
 
@@ -42,16 +47,14 @@ function clearCache(dataDir) {
   try { fs.unlinkSync(tokenFile(dataDir)); } catch { /* ignore */ }
 }
 
-// Local sanity check — decodes the token body without verifying the HMAC (server does that on
-// every /validate). Used to decide if we should let the user in while offline.
-function peekToken(token) {
+// The token's signature, checked with the public half of the server's key. The app can read a token but
+// can't extend or forge one, which is what stops editing the expiry and blocking the license server.
+function readToken(token, publicKey = TOKEN_PUBLIC_KEY) {
   try {
-    const [body] = token.split('.');
-    if (!body) return null;
-    const padded = body.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((body.length + 3) % 4);
-    const claims = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
-    if (!claims || !claims.exp) return null;
-    return claims;
+    const [body, sig] = token.split('.');
+    if (!crypto.verify(null, Buffer.from(body), publicKey, Buffer.from(sig, 'base64url'))) return null;
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    return claims?.exp ? claims : null;
   } catch { return null; }
 }
 
@@ -74,10 +77,13 @@ async function postJson(url, body, timeoutMs = 8000) {
   }
 }
 
-function createLicenseClient({ apiBase = DEFAULT_API_BASE, dataDir, appVersion }) {
+function createLicenseClient({ apiBase = DEFAULT_API_BASE, dataDir, appVersion, publicKey = TOKEN_PUBLIC_KEY }) {
   const base = (apiBase || DEFAULT_API_BASE).replace(/\/+$/, '');
   const deviceId = getDeviceId();
   const deviceLabel = getDeviceLabel();
+
+  // Refuses anything not signed by our server for this computer, including a fake server's approval.
+  const isOurs = (token) => readToken(token, publicKey)?.d === deviceId;
 
   async function activate(key) {
     const trimmed = (key || '').trim().toUpperCase();
@@ -89,23 +95,34 @@ function createLicenseClient({ apiBase = DEFAULT_API_BASE, dataDir, appVersion }
       console.warn('[license] activation failed:', status, data?.error || 'unknown');
       return { ok: false, error: data?.error || 'activation_failed', detail: data };
     }
+    if (!isOurs(data.token)) return { ok: false, error: 'activation_failed' };
     writeCache(dataDir, { token: data.token, plan: data.plan, email: data.email, licenseKey: trimmed, cachedAt: Date.now() });
     return { ok: true, plan: data.plan, email: data.email };
   }
 
   // Called at startup. Returns one of:
   //   { ok: true,  plan, email, source: 'server' | 'cache' }
-  //   { ok: false, reason: 'no_license' | 'expired_offline' | 'revoked' | 'device_revoked' | 'expired' | 'network_error' }
+  //   { ok: false, reason: 'no_license' | 'expired_offline' | 'revoked' | 'device_revoked' | 'device_mismatch' | 'invalid_token' | 'plan_ended' | 'expired' | 'network_error' }
   async function validateAtStartup() {
     const cached = readCache(dataDir);
     if (!cached?.token) return { ok: false, reason: 'no_license' };
 
-    const claims = peekToken(cached.token);
+    const claims = readToken(cached.token, publicKey);
     const now = Date.now();
 
+    if (!claims) {
+      clearCache(dataDir);
+      return { ok: false, reason: 'invalid_token' };
+    }
+    // Without this, a license file copied from another computer would run here using that computer's slot.
+    if (claims.d !== deviceId) {
+      clearCache(dataDir);
+      return { ok: false, reason: 'device_mismatch' };
+    }
+
     // Try the server. If network is up, the server's answer wins.
-    const { ok, status, data } = await postJson(`${base}/api/license/validate`, { token: cached.token }, 6000);
-    if (ok && data?.ok) {
+    const { ok, status, data } = await postJson(`${base}/api/license/validate`, { token: cached.token, deviceId }, 6000);
+    if (ok && data?.ok && isOurs(data.token)) {
       writeCache(dataDir, { ...cached, token: data.token, plan: data.plan, email: data.email, cachedAt: Date.now() });
       return { ok: true, plan: data.plan, email: data.email, source: 'server' };
     }
@@ -116,14 +133,23 @@ function createLicenseClient({ apiBase = DEFAULT_API_BASE, dataDir, appVersion }
       return { ok: false, reason: data.error };
     }
 
-    // Network error or 5xx — fall back to the cached token if it hasn't expired yet.
-    if (claims && claims.exp && claims.exp > now) {
+    // Network error or 5xx: fall back to the cached token until it expires, which forces a check-in.
+    // shortcut: a clock set back to inside the token's window still passes, but a clock before it doesn't.
+    if (claims.exp > now && claims.iat <= now + 86_400_000) {
       return { ok: true, plan: cached.plan, email: cached.email, source: 'cache' };
     }
     return { ok: false, reason: 'expired_offline' };
   }
 
-  function deactivate() { clearCache(dataDir); }
+  // Keeps the local license if the server can't be reached: the slot would stay used with no way back.
+  async function deactivate() {
+    const token = readCache(dataDir)?.token;
+    if (!token) return { ok: false, error: 'no_license' };
+    const { ok, data } = await postJson(`${base}/api/license/deactivate`, { token, deviceId });
+    if (!ok || !data?.ok) return { ok: false, error: data?.error || 'network_error' };
+    clearCache(dataDir);
+    return { ok: true };
+  }
 
   function currentLicenseKey() { return readCache(dataDir)?.licenseKey || null; }
   function currentPlan() { return readCache(dataDir)?.plan || null; }
@@ -132,4 +158,4 @@ function createLicenseClient({ apiBase = DEFAULT_API_BASE, dataDir, appVersion }
   return { activate, validateAtStartup, deactivate, currentLicenseKey, currentPlan, currentToken, deviceId, deviceLabel };
 }
 
-module.exports = { createLicenseClient, peekToken };
+module.exports = { createLicenseClient, readToken };

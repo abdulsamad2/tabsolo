@@ -38,7 +38,7 @@ form.addEventListener('submit', async (event) => {
 
 buy.addEventListener('click', (event) => {
   event.preventDefault();
-  licenseApi.openExternal('https://tabsolo.com/#pricing');
+  licenseApi.openExternal('https://tabsolo-site.vercel.app/sign-up');
 });
 
 function humanize(code) {
@@ -46,7 +46,8 @@ function humanize(code) {
     invalid_key: 'That key doesn\'t match any license on file.',
     revoked: 'This license has been revoked. Contact support.',
     expired: 'This license has expired. Renew to continue.',
-    device_limit_reached: 'This license is already active on the maximum number of devices.',
+    plan_ended: 'The free beta has ended. Enter a paid license key to keep using TabSolo.',
+    device_limit_reached: 'This key is already active on the maximum number of computers. Contact support to free one up.',
     network_error: 'Can\'t reach the license server. Check your internet connection.',
     empty_key: 'Please enter a license key.',
   };

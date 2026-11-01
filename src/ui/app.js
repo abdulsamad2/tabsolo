@@ -1518,6 +1518,7 @@ async function openSettings() {
   updateInfo = await window.fleet.getUpdateInfo();
   renderUpdates();
   setModal('#settings-sheet', true);
+  renderLicense();
   $('#settings-close').focus();
 }
 
@@ -1529,6 +1530,22 @@ window.fleet.onOpenSettings(openSettings);
 $('#settings-open').addEventListener('click', openSettings);
 $('#launcher-settings').addEventListener('click', openSettings);
 $('#settings-close').addEventListener('click', () => setModal('#settings-sheet', false));
+async function renderLicense() {
+  const { key } = await window.fleet.getLicenseInfo();
+  $('#license-group').hidden = !key;
+  $('#license-key').textContent = key ?? '';
+}
+$('#license-deactivate').addEventListener('click', async () => {
+  if (!confirm('Deactivate TabSolo on this computer?\n\nAll tabs close and TabSolo restarts. You can activate here again with your license key.')) return;
+  const button = $('#license-deactivate');
+  button.disabled = true;
+  const result = await window.fleet.deactivateLicense();
+  if (result.ok) return;
+  button.disabled = false;
+  showNotice(result.error === 'network_error' || result.error === 'TypeError' || result.error === 'AbortError'
+    ? 'Can’t reach the license server, so this computer is still active. Check your connection and try again.'
+    : `Could not deactivate: ${result.error}`, 6000);
+});
 $('#settings-check').addEventListener('click', async () => {
   updateInfo = { ...updateInfo, status: { kind: 'checking', manual: true } };
   renderUpdates();

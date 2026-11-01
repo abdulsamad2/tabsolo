@@ -3,16 +3,20 @@
 // Endpoints:
 //   POST /api/license/activate   — redeem a key + bind this device (returns a signed token)
 //   POST /api/license/validate   — periodic re-check (returns ok + plan)
+//   POST /api/license/deactivate — free this computer's slot
 //   POST /api/telemetry/event    — one usage event, fire-and-forget
 //   POST /api/telemetry/error    — one error report, fire-and-forget
 //   GET  /admin/licenses         — admin-only: list all licenses (needs Bearer <ADMIN_TOKEN>)
+//   GET  /admin/activations      — admin-only: every computer using a license
 //   POST /admin/license          — admin-only: issue a license
 //   POST /admin/revoke           — admin-only: revoke a license or a single device activation
+//   POST /admin/plan-end         — admin-only: set the date a whole plan (e.g. the free beta) stops working
 //   GET  /admin/dashboard        — admin-only: minimal HTML dashboard (recent errors + events)
 //
 // Signed activation token (returned by /activate, cached by the client, re-sent on /validate):
-//   base64url(json({ k: licenseKey, d: deviceId, p: plan, iat: ms, exp: ms })) + "." + base64url(hmac)
-// The client re-sends the token on /validate so the server can refuse revoked ones immediately.
+//   base64url(json({ k: licenseKey, d: deviceId, p: plan, iat: ms, exp: ms })) + "." + base64url(ed25519 signature)
+// The client re-sends the token on /validate so the server can refuse revoked ones immediately. The app
+// holds the public key, so it can check a token offline but can't extend or forge one.
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -20,7 +24,7 @@ import { cors } from 'hono/cors';
 type Env = {
   DB: D1Database;
   ADMIN_TOKEN: string;
-  HMAC_SECRET: string;
+  TOKEN_SIGNING_JWK: string;
   APP_NAME: string;
   GRACE_PERIOD_MS: string;
 };
@@ -52,30 +56,24 @@ function b64urlToBytes(text: string): Uint8Array {
   return out;
 }
 
-async function importHmacKey(secret: string, usage: 'sign' | 'verify'): Promise<CryptoKey> {
-  // An unset secret would otherwise sign every token with the string "undefined".
-  if (!secret) throw new Error('HMAC_SECRET is not set');
-  return crypto.subtle.importKey(
-    'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, [usage],
-  );
+async function importTokenKey(env: Env, usage: 'sign' | 'verify'): Promise<CryptoKey> {
+  if (!env.TOKEN_SIGNING_JWK) throw new Error('TOKEN_SIGNING_JWK is not set');
+  const { kty, crv, x, d } = JSON.parse(env.TOKEN_SIGNING_JWK);
+  return crypto.subtle.importKey('jwk', usage === 'sign' ? { kty, crv, x, d } : { kty, crv, x }, 'Ed25519', false, [usage]);
 }
 
 async function makeToken(env: Env, payload: Record<string, unknown>): Promise<string> {
   const body = b64url.encode(JSON.stringify(payload));
-  const key = await importHmacKey(env.HMAC_SECRET, 'sign');
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body));
+  const sig = await crypto.subtle.sign('Ed25519', await importTokenKey(env, 'sign'), new TextEncoder().encode(body));
   return `${body}.${b64url.encode(new Uint8Array(sig))}`;
 }
 
 async function verifyToken(env: Env, token: string): Promise<Record<string, unknown> | null> {
   const [body, sig] = token.split('.');
   if (!body || !sig) return null;
-  // crypto.subtle.verify compares the MAC in constant time, so a byte-leak timing attack can't
-  // iterate signatures byte by byte the way a plain string compare would allow.
-  const key = await importHmacKey(env.HMAC_SECRET, 'verify');
   let sigBytes: Uint8Array;
   try { sigBytes = b64urlToBytes(sig); } catch { return null; }
-  const ok = await crypto.subtle.verify('HMAC', key, sigBytes as BufferSource, new TextEncoder().encode(body));
+  const ok = await crypto.subtle.verify('Ed25519', await importTokenKey(env, 'verify'), sigBytes as BufferSource, new TextEncoder().encode(body));
   if (!ok) return null;
   try { return JSON.parse(b64url.decode(body)); } catch { return null; }
 }
@@ -105,6 +103,13 @@ function badRequest(message: string): Response {
 
 // ───────────────────────────────────────────────── license endpoints
 
+const LICENSE_WITH_PLAN_END = 'SELECT l.*, p.ends_at AS plan_ends_at FROM licenses l LEFT JOIN plan_ends p ON p.plan = l.plan WHERE l.key = ?';
+
+// A token never outlives its license or plan, so going offline can't stretch past the end date.
+function tokenExpiry(env: Env, license: any, iat: number): number {
+  return Math.min(iat + Number(env.GRACE_PERIOD_MS), license.expires_at || Infinity, license.plan_ends_at || Infinity);
+}
+
 // Activate a license on this device. Body: { key, deviceId, deviceLabel, appVersion }.
 // Enforces max_devices and returns a signed token the client caches.
 app.post('/api/license/activate', async (c) => {
@@ -112,13 +117,13 @@ app.post('/api/license/activate', async (c) => {
   if (!body?.key || !body?.deviceId) return badRequest('key and deviceId required');
 
   const license = await c.env.DB
-    .prepare('SELECT * FROM licenses WHERE key = ?')
+    .prepare(LICENSE_WITH_PLAN_END)
     .bind(String(body.key).trim())
     .first<any>();
 
   if (!license) return c.json({ ok: false, error: 'invalid_key' }, 404);
-  if (license.status !== 'active') return c.json({ ok: false, error: license.status }, 403);
-  if (license.expires_at && license.expires_at < Date.now()) return c.json({ ok: false, error: 'expired' }, 403);
+  const refused = licenseError(license);
+  if (refused) return c.json({ ok: false, error: refused }, 403);
 
   // Does this device already have an active activation on this license? Then re-use.
   const existing = await c.env.DB
@@ -133,7 +138,9 @@ app.post('/api/license/activate', async (c) => {
     const insert = await c.env.DB
       .prepare(
         'INSERT INTO activations (license_key, device_id, device_label, app_version) ' +
-        'SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM activations WHERE license_key = ? AND revoked_at IS NULL) < ?',
+        'SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM activations WHERE license_key = ? AND revoked_at IS NULL) < ? ' +
+        // A revoked computer keeps its row, so coming back must revive it rather than hit the primary key.
+        'ON CONFLICT (license_key, device_id) DO UPDATE SET revoked_at = NULL, activated_at = unixepoch() * 1000',
       )
       .bind(license.key, body.deviceId, body.deviceLabel || null, body.appVersion || null, license.key, license.max_devices)
       .run();
@@ -153,7 +160,7 @@ app.post('/api/license/activate', async (c) => {
     d: body.deviceId,
     p: license.plan,
     iat,
-    exp: iat + Number(c.env.GRACE_PERIOD_MS),
+    exp: tokenExpiry(c.env, license, iat),
   });
 
   return c.json({
@@ -169,6 +176,7 @@ app.post('/api/license/activate', async (c) => {
 // Re-validate on launch and periodically. Body: { token }. Returns ok + plan or an error reason.
 function licenseError(license: any): string | null {
   if (!license || license.status !== 'active') return 'revoked';
+  if (license.plan_ends_at && license.plan_ends_at <= Date.now()) return 'plan_ended';
   if (license.expires_at && license.expires_at < Date.now()) return 'expired';
   return null;
 }
@@ -185,9 +193,14 @@ app.post('/api/license/validate', async (c) => {
   if (!hasValidClaims(claims)) {
     return c.json({ ok: false, error: 'invalid_token' }, 401);
   }
+  // A license file copied to another computer carries the first computer's id.
+  // shortcut: builds before 0.1.0-beta.3 don't send deviceId and pass here, make it required once they're gone.
+  if (body.deviceId && body.deviceId !== claims.d) {
+    return c.json({ ok: false, error: 'device_mismatch' }, 403);
+  }
 
   const license = await c.env.DB
-    .prepare('SELECT * FROM licenses WHERE key = ?')
+    .prepare(LICENSE_WITH_PLAN_END)
     .bind(claims.k)
     .first<any>();
   const licErr = licenseError(license);
@@ -206,8 +219,22 @@ app.post('/api/license/validate', async (c) => {
 
   // Issue a fresh token with a bumped expiry so the client's offline grace window stays rolling.
   const iat = Date.now();
-  const token = await makeToken(c.env, { k: license.key, d: claims.d, p: license.plan, iat, exp: iat + Number(c.env.GRACE_PERIOD_MS) });
+  const token = await makeToken(c.env, { k: license.key, d: claims.d, p: license.plan, iat, exp: tokenExpiry(c.env, license, iat) });
   return c.json({ ok: true, token, plan: license.plan, email: license.email, expiresAt: license.expires_at });
+});
+
+// Frees this computer's slot, from the app itself. Body: { token, deviceId }.
+app.post('/api/license/deactivate', async (c) => {
+  const body = await c.req.json<any>().catch(() => null);
+  if (!body?.token || !body?.deviceId) return badRequest('token and deviceId required');
+  const claims = await verifyToken(c.env, body.token);
+  if (!hasValidClaims(claims)) return c.json({ ok: false, error: 'invalid_token' }, 401);
+  if (body.deviceId !== claims.d) return c.json({ ok: false, error: 'device_mismatch' }, 403);
+  await c.env.DB
+    .prepare('UPDATE activations SET revoked_at = ? WHERE license_key = ? AND device_id = ? AND revoked_at IS NULL')
+    .bind(Date.now(), claims.k, claims.d)
+    .run();
+  return c.json({ ok: true });
 });
 
 // ───────────────────────────────────────────────── telemetry endpoints
@@ -280,6 +307,15 @@ app.get('/admin/licenses', async (c) => {
   return c.json({ ok: true, licenses: results });
 });
 
+// Every computer currently using a license, for the admin page.
+app.get('/admin/activations', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const { results } = await c.env.DB
+    .prepare('SELECT license_key, device_id, device_label, app_version, last_seen_at FROM activations WHERE revoked_at IS NULL ORDER BY last_seen_at DESC')
+    .all();
+  return c.json({ ok: true, activations: results });
+});
+
 // Issue a license. Body: { key, email, plan, max_devices?, expires_at? }.
 app.post('/admin/license', async (c) => {
   const bad = requireAdmin(c); if (bad) return bad;
@@ -295,6 +331,23 @@ app.post('/admin/license', async (c) => {
     return c.json({ ok: false, error: 'duplicate_or_invalid', detail: String(e?.message || e) }, 400);
   }
   return c.json({ ok: true, key: body.key });
+});
+
+// Ends a whole plan on a date, for every license on it now or issued later and every app version,
+// because the check runs here. Body: { plan, endsAt } with endsAt in unix ms, or null to remove the end.
+app.post('/admin/plan-end', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const body = await c.req.json<any>().catch(() => null);
+  if (!body?.plan || (body.endsAt !== null && !Number.isFinite(body.endsAt))) return badRequest('plan and endsAt (ms or null) required');
+  if (body.endsAt === null) {
+    await c.env.DB.prepare('DELETE FROM plan_ends WHERE plan = ?').bind(body.plan).run();
+  } else {
+    await c.env.DB
+      .prepare('INSERT INTO plan_ends (plan, ends_at) VALUES (?, ?) ON CONFLICT (plan) DO UPDATE SET ends_at = excluded.ends_at')
+      .bind(body.plan, body.endsAt)
+      .run();
+  }
+  return c.json({ ok: true, plan: body.plan, endsAt: body.endsAt });
 });
 
 const BETA_MAX_DEVICES = 2;
