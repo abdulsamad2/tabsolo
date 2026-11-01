@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const { getDeviceId, getDeviceLabel } = require('./device');
 
-const DEFAULT_API_BASE = 'https://tabfleet-api.example.workers.dev'; // override via config
+const DEFAULT_API_BASE = 'https://tabfleet-api.abdulsamad-laghari1.workers.dev';
 const TOKEN_FILE_BASENAME = 'license.json';
 
 function tokenFile(dataDir) { return path.join(dataDir, TOKEN_FILE_BASENAME); }
