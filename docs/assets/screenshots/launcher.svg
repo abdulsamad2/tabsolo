@@ -63,7 +63,7 @@
     <g font-size="13" font-weight="500">
       <rect x="42" y="448" width="200" height="38" fill="#20283a" stroke="#5a7cff" stroke-width="1.5" rx="8"/>
       <circle cx="60" cy="467" r="5" fill="#c91c1c"/>
-      <text x="76" y="472" fill="#eef1f6">Primetime Stubs</text>
+      <text x="76" y="472" fill="#eef1f6">Group Alpha</text>
       <text x="76" y="486" fill="#6b7380" font-size="10">42 accounts</text>
 
       <rect x="250" y="448" width="180" height="38" fill="#1b212b" stroke="#2a303a" rx="8"/>

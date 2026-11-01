@@ -21,7 +21,7 @@
   <circle cx="24" cy="20" r="6" fill="#ff5f57"/>
   <circle cx="46" cy="20" r="6" fill="#febc2e"/>
   <circle cx="68" cy="20" r="6" fill="#28c840"/>
-  <text x="800" y="25" text-anchor="middle" fill="#6b7380" font-size="12" font-weight="500">TabFleet — Primetime Stubs</text>
+  <text x="800" y="25" text-anchor="middle" fill="#6b7380" font-size="12" font-weight="500">TabFleet — Live drop</text>
 
   <!-- Toolbar -->
   <rect y="40" width="1600" height="56" fill="#141821"/>
@@ -265,7 +265,7 @@
   <rect x="1140" y="408" width="420" height="400" fill="#141821" stroke="#2a303a" rx="10"/>
   <text x="1160" y="438" fill="#a4acb8" font-size="12" font-weight="600" letter-spacing="1">CURRENT ORDER · #4821</text>
   <text x="1160" y="462" fill="#eef1f6" font-size="14" font-weight="600">Lower 109 · Row G · Seats 7–10</text>
-  <text x="1160" y="482" fill="#a4acb8" font-size="12">Qty 4 · $525 face · Primetime Stubs</text>
+  <text x="1160" y="482" fill="#a4acb8" font-size="12">Qty 4 · $525 face · marketplace listing</text>
 
   <g font-size="12" fill="#a4acb8">
     <line x1="1160" y1="500" x2="1540" y2="500" stroke="#2a303a"/>
