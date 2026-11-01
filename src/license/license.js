@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const { getDeviceId, getDeviceLabel } = require('./device');
 
-const DEFAULT_API_BASE = 'https://tabfleet-api.abdulsamad-laghari1.workers.dev';
+const DEFAULT_API_BASE = 'https://tabsolo-api.abdulsamad-laghari1.workers.dev';
 const TOKEN_FILE_BASENAME = 'license.json';
 
 function tokenFile(dataDir) { return path.join(dataDir, TOKEN_FILE_BASENAME); }
@@ -80,12 +80,15 @@ function createLicenseClient({ apiBase = DEFAULT_API_BASE, dataDir, appVersion }
   const deviceLabel = getDeviceLabel();
 
   async function activate(key) {
-    const trimmed = (key || '').trim();
+    const trimmed = (key || '').trim().toUpperCase();
     if (!trimmed) return { ok: false, error: 'empty_key' };
-    const { ok, data } = await postJson(`${base}/api/license/activate`, {
+    const { ok, status, data } = await postJson(`${base}/api/license/activate`, {
       key: trimmed, deviceId, deviceLabel, appVersion,
     });
-    if (!ok || !data?.ok) return { ok: false, error: data?.error || 'activation_failed', detail: data };
+    if (!ok || !data?.ok) {
+      console.warn('[license] activation failed:', status, data?.error || 'unknown');
+      return { ok: false, error: data?.error || 'activation_failed', detail: data };
+    }
     writeCache(dataDir, { token: data.token, plan: data.plan, email: data.email, licenseKey: trimmed, cachedAt: Date.now() });
     return { ok: true, plan: data.plan, email: data.email };
   }
@@ -124,8 +127,9 @@ function createLicenseClient({ apiBase = DEFAULT_API_BASE, dataDir, appVersion }
 
   function currentLicenseKey() { return readCache(dataDir)?.licenseKey || null; }
   function currentPlan() { return readCache(dataDir)?.plan || null; }
+  function currentToken() { return readCache(dataDir)?.token || null; }
 
-  return { activate, validateAtStartup, deactivate, currentLicenseKey, currentPlan, deviceId, deviceLabel };
+  return { activate, validateAtStartup, deactivate, currentLicenseKey, currentPlan, currentToken, deviceId, deviceLabel };
 }
 
-module.exports = { createLicenseClient };
+module.exports = { createLicenseClient, peekToken };

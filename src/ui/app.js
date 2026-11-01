@@ -720,7 +720,7 @@ function renderProfileDetails(profile, tab) {
     rows.push(detailRow(`Card${n}`, card.last4 ? `•••• ${card.last4}` : 'Saved on the account', { copy: card.hasNumber ? { secret: `card.${i}.number` } : '', masked: true }));
     if (card.expMonth) {
       // Expiry is masked like card number and CVV; the copy button pulls the real value via the
-      // encrypted-clipboard path, so pasting outside TabFleet shows gibberish.
+      // encrypted-clipboard path, so pasting outside TabSolo shows gibberish.
       rows.push(detailRow(`Expiry${n}`, '••/••', { copy: { secret: `card.${i}.expiry` }, masked: true }));
     }
     rows.push(card.hasCvv
@@ -976,7 +976,7 @@ document.addEventListener('keydown', (event) => {
 // ---------- Dialogs ----------
 
 // Tab pages are drawn above this window's UI, so main hides the page while any dialog is open.
-const MODALS = ['#shortcuts-sheet', '#settings-sheet', '#orders-sheet', '#group-sheet', '#seat-test-sheet', '#palette', '#playbooks-sheet'];
+const MODALS = ['#shortcuts-sheet', '#settings-sheet', '#orders-sheet', '#group-sheet', '#seat-test-sheet', '#palette', '#playbooks-sheet', '#recording-review-sheet'];
 function setModal(selector, open) {
   $(selector).hidden = !open;
   window.fleet.setOverlay(MODALS.some((s) => !$(s).hidden));
@@ -1235,7 +1235,12 @@ $('#playbooks-list')?.addEventListener('click', async (event) => {
     strong.replaceWith(input);
     input.focus();
     input.select();
+    let committed = false;
     const commit = async (save) => {
+      // Enter/Escape commits remove the input from the DOM, which fires blur and would call
+      // commit a second time. The flag collapses that into one call.
+      if (committed) return;
+      committed = true;
       const next = input.value.trim();
       if (save && next && next !== current) {
         const result = await window.fleet.renamePlaybook({ id, name: next });
@@ -1330,27 +1335,102 @@ $('#seat-test-open').addEventListener('click', openSeatTest);
 const recordBtn = $('#record-toggle');
 recordBtn.addEventListener('click', async () => {
   if (state.recording) {
-    // Stop + auto-save as a playbook with a default name. No modal, no new tabs — the only side
-    // effect is a toast showing what happened and (if needed) how to find or rename the playbook.
-    // The user can rename it later from the Playbooks list (📜 Playbooks → right-click row).
+    // Stop without a name so main returns the captured actions. The user reviews them (uncheck
+    // steps, insert waits), then clicks Save in the review modal. The raw file main dumps along
+    // the way is the backup if the user Cancels.
     const orderContext = selectedTab()?.orderId
       ? orderState.orders.find((o) => String(o.id) === String(selectedTab().orderId))
       : null;
-    const defaultName = `Playbook ${new Date().toLocaleString()}`;
-    const result = await window.fleet.stopRecording({ name: defaultName, orderContext });
-    if (result?.playbook) {
-      showNotice(`Saved playbook "${result.playbook.name}" with ${result.playbook.actions.length} actions.`, 6000);
-      openPlaybooks(); // show the dedicated management view so the user can rename / run
-    } else if (result?.count === 0) {
+    const result = await window.fleet.stopRecording({ orderContext });
+    if (!result || result.count === 0) {
       showNotice('Nothing was recorded.');
-    } else if (result?.file) {
-      showNotice(`Recorded ${result.count} actions.`);
+      return;
     }
+    openRecordingReview(result.actions || [], orderContext);
   } else {
     await window.fleet.startRecording();
-    showNotice('Recording. Click Stop when you’re done — it saves as a playbook automatically.', 6000);
+    showNotice('Recording. Click Stop when you’re done — you’ll get a chance to prune steps.', 6000);
   }
 });
+// Review modal: let the user prune steps and insert waits before the recording becomes a playbook.
+// Model: { action, keep } rows. 'wait' rows carry { action: { type: 'wait', ms }, keep: true }.
+let reviewRows = [];
+let reviewOrderContext = null;
+function openRecordingReview(actions, orderContext) {
+  reviewRows = actions.map((action) => ({ action, keep: true }));
+  reviewOrderContext = orderContext;
+  $('#recording-review-name').value = `Playbook ${new Date().toLocaleString()}`;
+  renderReviewList();
+  setModal('#recording-review-sheet', true);
+}
+function reviewLabel(action) {
+  if (action.type === 'wait') return `${action.ms}ms pause`;
+  const el = action.el || {};
+  const bits = [el.text, el.attrs?.['aria-label'], el.attrs?.name, el.attrs?.placeholder, action.url, action.key]
+    .filter(Boolean).map((v) => String(v).slice(0, 60));
+  if (action.type === 'input' || action.type === 'change') bits.unshift(action.value ? `“${String(action.value).slice(0, 40)}”` : '(blank)');
+  return bits[0] || el.tag || action.type;
+}
+function renderReviewList() {
+  const list = $('#recording-review-list');
+  list.replaceChildren();
+  reviewRows.forEach((row, index) => {
+    // Insertion button before every row (and one at the end below) so the user can drop a wait
+    // anywhere in the sequence.
+    const insert = document.createElement('div');
+    insert.className = 'review-insert';
+    const btn = Object.assign(document.createElement('button'), { textContent: '+ wait' });
+    btn.addEventListener('click', () => {
+      reviewRows.splice(index, 0, { action: { type: 'wait', ms: 500 }, keep: true });
+      renderReviewList();
+    });
+    insert.append(btn);
+    list.append(insert);
+
+    const el = document.createElement('div');
+    el.className = `review-row${row.keep ? '' : ' disabled'}${row.action.type === 'wait' ? ' wait' : ''}`;
+    const check = Object.assign(document.createElement('input'), { type: 'checkbox', checked: row.keep });
+    check.addEventListener('change', () => { row.keep = check.checked; renderReviewList(); });
+    const kind = Object.assign(document.createElement('span'), { className: 'kind', textContent: row.action.type });
+    el.append(check, kind);
+    if (row.action.type === 'wait') {
+      const ms = Object.assign(document.createElement('input'), { type: 'number', min: '0', max: '60000', step: '100', value: String(row.action.ms) });
+      ms.addEventListener('input', () => { row.action.ms = Math.max(0, Math.min(60000, Number(ms.value) || 0)); });
+      const label = Object.assign(document.createElement('span'), { className: 'label', textContent: 'ms' });
+      el.append(ms, label);
+    } else {
+      const label = Object.assign(document.createElement('span'), { className: 'label', textContent: reviewLabel(row.action) });
+      el.append(label);
+    }
+    list.append(el);
+  });
+  const tail = document.createElement('div');
+  tail.className = 'review-insert';
+  const tailBtn = Object.assign(document.createElement('button'), { textContent: '+ wait' });
+  tailBtn.addEventListener('click', () => {
+    reviewRows.push({ action: { type: 'wait', ms: 500 }, keep: true });
+    renderReviewList();
+  });
+  tail.append(tailBtn);
+  list.append(tail);
+}
+$('#recording-review-close')?.addEventListener('click', () => setModal('#recording-review-sheet', false));
+$('#recording-review-cancel')?.addEventListener('click', () => {
+  setModal('#recording-review-sheet', false);
+  showNotice('Recording not saved. The raw backup is in TabSolo’s data folder.', 6000);
+});
+$('#recording-review-save')?.addEventListener('click', async () => {
+  const name = $('#recording-review-name').value.trim();
+  if (!name) { showNotice('Give the playbook a name.'); return; }
+  const actions = reviewRows.filter((r) => r.keep).map((r) => r.action);
+  if (actions.length === 0) { showNotice('Nothing to save — every step is unchecked.'); return; }
+  const result = await window.fleet.saveLastRecordingAsPlaybook({ name, orderContext: reviewOrderContext, actions });
+  if (result?.error) { showNotice(result.error); return; }
+  setModal('#recording-review-sheet', false);
+  showNotice(`Saved playbook "${result.playbook.name}" with ${result.playbook.actions.length} actions.`, 6000);
+  openPlaybooks();
+});
+
 function renderRecorderButton() {
   if (state.recording) {
     recordBtn.textContent = `⏹ Stop (${state.recordedCount ?? 0})`;
@@ -1904,7 +1984,7 @@ $('#order-detail').addEventListener('click', (event) => {
 // ---------- Group dialog ----------
 
 // The group is picked on the start screen and locked for the session. This dialog shows it, renames
-// groups, and restarts TabFleet to change group. Only a session without a group can choose one here.
+// groups, and restarts TabSolo to change group. Only a session without a group can choose one here.
 const groupDialog = { renaming: null };
 
 function openGroupDialog() {
@@ -1917,7 +1997,7 @@ function renderGroupDialog() {
   const active = activeGroupInfo();
   $('#group-intro').textContent = active
     ? `This session works in ${active.name}: only its accounts can be used in tabs.`
-    : 'Choose the group of accounts to work in. It stays the same until TabFleet restarts.';
+    : 'Choose the group of accounts to work in. It stays the same until TabSolo restarts.';
   $('#group-list').replaceChildren(...(state.groups ?? []).map((g) => {
     const item = document.createElement('li');
     item.dataset.group = g.key;
@@ -1988,7 +2068,7 @@ $('#group-list').addEventListener('keydown', (event) => {
   if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); groupDialog.renaming = null; renderGroupDialog(); }
 });
 $('#group-restart').addEventListener('click', () => {
-  if (confirm('Restart TabFleet to choose another group?\n\nAll tabs close. Accounts stay signed in and come back when you work in their group again.')) {
+  if (confirm('Restart TabSolo to choose another group?\n\nAll tabs close. Accounts stay signed in and come back when you work in their group again.')) {
     window.fleet.restartForGroup();
   }
 });
@@ -2643,7 +2723,7 @@ function selectedTabIds() {
 }
 
 // Shared bulk-action runner for Ctrl/Cmd + 1 and Ctrl/Cmd + 2 — triggered BOTH from the in-page
-// keydown listener (fires when the TabFleet UI has focus) AND from the menu accelerator IPC (fires
+// keydown listener (fires when the TabSolo UI has focus) AND from the menu accelerator IPC (fires
 // when a tab's page has focus, since Chromium menu accelerators win over page keyboard handlers).
 function runBulkShortcut(name) {
   const ids = selectedTabIds();

@@ -14,7 +14,7 @@ const FLUSH_INTERVAL_MS = 60_000;
 const QUEUE_FILE = 'telemetry-queue.json';
 const MAX_QUEUE = 500;
 
-function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLicenseKey, enabled = true }) {
+function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLicenseKey, getToken, enabled = true }) {
   const base = (apiBase || '').replace(/\/+$/, '');
   const queuePath = path.join(dataDir, QUEUE_FILE);
   let queue = loadQueue();
@@ -26,7 +26,12 @@ function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLice
     catch { return []; }
   }
   function saveQueue() {
-    try { fs.mkdirSync(dataDir, { recursive: true }); fs.writeFileSync(queuePath, JSON.stringify(queue)); } catch { /* ignore */ }
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+      const tmp = queuePath + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(queue));
+      fs.renameSync(tmp, queuePath);
+    } catch { /* ignore */ }
   }
 
   function enqueue(kind, body) {
@@ -49,6 +54,10 @@ function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLice
   async function flush() {
     if (!enabled || !base || flushing || queue.length === 0) return;
     flushing = true;
+    const token = getToken?.() || null;
+    // No token yet (activation not complete): hold the queue, don't drop. The server rejects
+    // unauthenticated writes, so sending would just burn battery and consume rate limits.
+    if (!token) { flushing = false; return; }
     const batch = queue.slice(0, 20);
     const sent = [];
     for (const item of batch) {
@@ -59,12 +68,12 @@ function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLice
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(item.body),
+          body: JSON.stringify({ ...item.body, token }),
           signal: ctl.signal,
         });
         clearTimeout(timeout);
         if (res.ok) sent.push(item);
-        else if (res.status >= 400 && res.status < 500) sent.push(item); // malformed → drop
+        else if (res.status >= 400 && res.status < 500 && res.status !== 401) sent.push(item); // malformed → drop; 401 → retry after re-validate
       } catch { /* keep in queue, try next tick */ }
     }
     if (sent.length) {

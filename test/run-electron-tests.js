@@ -10,8 +10,10 @@ const electron = require('electron'); // the binary path when required from Node
 // VS Code terminals set this, which would make Electron run as plain Node.
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
-// Tests record the clock TabFleet would set instead of changing the computer's timezone or restarting.
-env.TABFLEET_CLOCK_LOG = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tabfleet-clock-')), 'clock.log');
+// Tests record the clock TabSolo would set instead of changing the computer's timezone or restarting.
+env.TABSOLO_CLOCK_LOG = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tabsolo-clock-')), 'clock.log');
+// Dev-only bypass: skips the license gate so the real main.js runs without hitting the Workers API.
+env.TABSOLO_SKIP_LICENSE = '1';
 
 function run(label, file, extraEnv = {}) {
   process.stdout.write(`\n▶ ${label}\n`);
@@ -25,7 +27,7 @@ function run(label, file, extraEnv = {}) {
 }
 
 run('Main flow', 'e2e.electron.js');
-const profileData = fs.mkdtempSync(path.join(os.tmpdir(), 'tabfleet-profiles-'));
+const profileData = fs.mkdtempSync(path.join(os.tmpdir(), 'tabsolo-profiles-'));
 run('Profile sessions', 'profile-sessions.electron.js', { PROFILE_SESSIONS_PHASE: '1', PROFILE_SESSIONS_DATA: profileData });
 run('Profile sessions after restart', 'profile-sessions.electron.js', { PROFILE_SESSIONS_PHASE: '2', PROFILE_SESSIONS_DATA: profileData });
 run('Google Sheets import', 'sheets.electron.js');

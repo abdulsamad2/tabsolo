@@ -38,7 +38,7 @@ form.addEventListener('submit', async (event) => {
 
 buy.addEventListener('click', (event) => {
   event.preventDefault();
-  licenseApi.openExternal('https://abdulsamad2.github.io/tab_fleet/#pricing');
+  licenseApi.openExternal('https://tabsolo.com/#pricing');
 });
 
 function humanize(code) {

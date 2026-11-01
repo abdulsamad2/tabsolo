@@ -1,4 +1,4 @@
-# TabFleet API (Cloudflare Workers + D1)
+# TabSolo API (Cloudflare Workers + D1)
 
 License + telemetry backend. Free up to thousands of users.
 
@@ -8,17 +8,17 @@ License + telemetry backend. Free up to thousands of users.
 cd server
 npm install
 npx wrangler login                                # authenticate once
-npx wrangler d1 create tabfleet                   # copy the database_id into wrangler.toml
+npx wrangler d1 create tabsolo                   # copy the database_id into wrangler.toml
 npm run db:migrate:prod                           # creates the four tables remotely
 npx wrangler secret put ADMIN_TOKEN               # paste a long random string
 npx wrangler secret put HMAC_SECRET               # paste another long random string
-npm run deploy                                    # live at https://tabfleet-api.<account>.workers.dev
+npm run deploy                                    # live at https://tabsolo-api.<account>.workers.dev
 ```
 
 ## Issue a license
 
 ```bash
-curl -X POST https://tabfleet-api.<account>.workers.dev/admin/license \
+curl -X POST https://tabsolo-api.<account>.workers.dev/admin/license \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"key":"TF-XXXX-YYYY-ZZZZ","email":"customer@example.com","plan":"solo"}'
@@ -28,7 +28,7 @@ Plans: `solo` (1 device), `pro` (3 devices), `team` (set `max_devices` yourself)
 
 ## Admin dashboard
 
-Open `https://tabfleet-api.<account>.workers.dev/admin/dashboard` in a browser with the `Authorization: Bearer <ADMIN_TOKEN>` header set (use the ModHeader extension, or curl).
+Open `https://tabsolo-api.<account>.workers.dev/admin/dashboard` in a browser with the `Authorization: Bearer <ADMIN_TOKEN>` header set (use the ModHeader extension, or curl).
 
 ## Revoke
 

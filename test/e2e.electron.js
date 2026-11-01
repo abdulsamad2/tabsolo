@@ -1,7 +1,7 @@
 'use strict';
 
 // End-to-end check: run with `npx electron test/e2e.electron.js` (unset ELECTRON_RUN_AS_NODE first).
-// Launches TabFleet against a local authenticating proxy, drives the real UI, and checks per-tab
+// Launches TabSolo against a local authenticating proxy, drives the real UI, and checks per-tab
 // sessions, Burn IP (new IP + fresh cookies), regions, Switch To Proxy, colors, notes, timers, quick fill and profiles.
 
 const { app, BrowserWindow, webContents, dialog, session } = require('electron');
@@ -12,7 +12,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'tabfleet-e2e-'));
+const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'tabsolo-e2e-'));
 const outDir = process.env.E2E_OUT ?? userData;
 app.setPath('userData', userData);
 
@@ -31,7 +31,7 @@ const proxy = http.createServer((req, res) => {
     res.end();
     return;
   }
-  // The proxy-IP timezone lookup (TABFLEET_TZ_LOOKUP_URL): where each proxy "is".
+  // The proxy-IP timezone lookup (TABSOLO_TZ_LOOKUP_URL): where each proxy "is".
   if (new URL(req.url).host === 'tz-lookup.test') {
     tzLookups.push(user);
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -132,9 +132,9 @@ proxy.listen(0, '127.0.0.1', async () => {
     rotating: { host: '127.0.0.1', port, usernameTemplate: 'u-{country}-{session}', password: 'pw', regions: 'us, ca' },
   }));
   await new Promise((resolve) => syncServer.listen(0, '127.0.0.1', resolve));
-  process.env.TABFLEET_SYNC_URL = `http://127.0.0.1:${syncServer.address().port}`;
-  process.env.TABFLEET_TZ_LOOKUP_URL = 'http://tz-lookup.test/json';
-  process.env.TABFLEET_CLOCK_LOG = path.join(userData, 'clock.log');
+  process.env.TABSOLO_SYNC_URL = `http://127.0.0.1:${syncServer.address().port}`;
+  process.env.TABSOLO_TZ_LOOKUP_URL = 'http://tz-lookup.test/json';
+  process.env.TABSOLO_CLOCK_LOG = path.join(userData, 'clock.log');
   // Blank (but set) so a developer's .env.local credentials aren't loaded into this run.
   process.env.SEATSCOUTS_COMPANY_ID = '';
   process.env.SEATSCOUTS_API_TOKEN = '';
@@ -417,13 +417,13 @@ app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     assert.equal(syncRequests.length, requestsAfterSetup, 'no background requests to Sync');
 
-    // The Orders screen shows the last 10 invoiced orders, newest first.
+    // The Orders screen shows the last 25 invoiced orders, newest first.
     SYNC_ORDERS.unshift({ ...SYNC_ORDERS[5], id: 99999, order_id: '799999999', status: 'invoiced', event_name: 'Bad Bunny', occurs_at: '2027-02-14T20:00:00', order_date: new Date().toISOString().slice(0, 19) });
     await ui(`document.querySelector('#orders-open').click()`);
     await waitFor(() => ui(`document.querySelectorAll('#orders-table tbody tr').length === 4`), 'invoiced orders only');
     assert.deepEqual(
       [syncRequests.at(-1).query.status, syncRequests.at(-1).query.limit, syncRequests.at(-1).query.order_by_direction],
-      ['invoiced', '10', 'desc'],
+      ['invoiced', '25', 'desc'],
     );
     assert.equal(await ui(`document.querySelector('#orders-table tbody tr .event strong').textContent`), 'Bad Bunny');
     await ui(`document.querySelectorAll('#orders-table tbody tr')[2].click()`);
@@ -500,7 +500,7 @@ app.whenReady().then(async () => {
 
     // The clock: set at Launch to where most proxies are (the pool's are in Chicago), with nothing
     // attached to the tabs; the panel shows each tab's proxy timezone.
-    const clockLog = () => fs.readFileSync(process.env.TABFLEET_CLOCK_LOG, 'utf8').split('\n').filter((l, i, a) => i < a.length - 1);
+    const clockLog = () => fs.readFileSync(process.env.TABSOLO_CLOCK_LOG, 'utf8').split('\n').filter((l, i, a) => i < a.length - 1);
     assert.deepEqual(clockLog(), ['America/Chicago'], 'the clock was set once, at Launch, before the tabs opened');
     assert.ok(webContents.getAllWebContents().every((wc) => !wc.debugger.isAttached()), 'no DevTools connection on any tab');
     const zonePage = await waitFor(() => pageViews().find((v) => v.getVisible())?.webContents, 'visible page');

@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const phase = process.env.PROFILE_SESSIONS_PHASE ?? '1';
-const userData = process.env.PROFILE_SESSIONS_DATA ?? fs.mkdtempSync(path.join(os.tmpdir(), 'tabfleet-profiles-'));
+const userData = process.env.PROFILE_SESSIONS_DATA ?? fs.mkdtempSync(path.join(os.tmpdir(), 'tabsolo-profiles-'));
 app.setPath('userData', userData);
 
 /** Requests the proxy served: proxy username (which session) and the visitor cookie the page sent. */
@@ -30,7 +30,7 @@ const proxy = http.createServer((req, res) => {
     return;
   }
   const user = Buffer.from(auth.split(' ')[1], 'base64').toString().split(':')[0];
-  // The proxy-IP timezone lookup (TABFLEET_TZ_LOOKUP_URL) isn't a page visit.
+  // The proxy-IP timezone lookup (TABSOLO_TZ_LOOKUP_URL) isn't a page visit.
   if (new URL(req.url).host === 'tz-lookup.test') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end('{"timezone":"America/Chicago"}');
@@ -69,8 +69,8 @@ proxy.listen(listenPort, '127.0.0.1', () => {
     proxySource: 'rotating',
     rotating: { host: '127.0.0.1', port: proxy.address().port, usernameTemplate: 'session-{session}', password: 'pw' },
   }));
-  process.env.TABFLEET_TZ_LOOKUP_URL = 'http://tz-lookup.test/json';
-  process.env.TABFLEET_CLOCK_LOG ??= path.join(userData, 'clock.log');
+  process.env.TABSOLO_TZ_LOOKUP_URL = 'http://tz-lookup.test/json';
+  process.env.TABSOLO_CLOCK_LOG ??= path.join(userData, 'clock.log');
   require('../src/main.js');
 });
 

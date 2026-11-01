@@ -1,4 +1,4 @@
-// TabFleet licensing + telemetry API, deployed to Cloudflare Workers.
+// TabSolo licensing + telemetry API, deployed to Cloudflare Workers.
 //
 // Endpoints:
 //   POST /api/license/activate   — redeem a key + bind this device (returns a signed token)
@@ -26,7 +26,9 @@ type Env = {
 };
 
 const app = new Hono<{ Bindings: Env }>();
-app.use('*', cors({ origin: '*', allowMethods: ['GET', 'POST', 'OPTIONS'] }));
+// CORS only on the public client API. /admin/* has no CORS so a stolen admin token in a browser
+// context can't be used from an arbitrary origin.
+app.use('/api/*', cors({ origin: '*', allowMethods: ['GET', 'POST', 'OPTIONS'] }));
 app.get('/', (c) => c.text(`${c.env.APP_NAME} API — ok`));
 
 // ───────────────────────────────────────────────── helpers
@@ -42,36 +44,53 @@ const b64url = {
   },
 };
 
-async function hmacSign(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
+function b64urlToBytes(text: string): Uint8Array {
+  const b64 = text.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((text.length + 3) % 4);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function importHmacKey(secret: string, usage: 'sign' | 'verify'): Promise<CryptoKey> {
+  // An unset secret would otherwise sign every token with the string "undefined".
+  if (!secret) throw new Error('HMAC_SECRET is not set');
+  return crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, [usage],
   );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
-  return b64url.encode(new Uint8Array(sig));
 }
 
 async function makeToken(env: Env, payload: Record<string, unknown>): Promise<string> {
   const body = b64url.encode(JSON.stringify(payload));
-  const sig = await hmacSign(env.HMAC_SECRET, body);
-  return `${body}.${sig}`;
+  const key = await importHmacKey(env.HMAC_SECRET, 'sign');
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body));
+  return `${body}.${b64url.encode(new Uint8Array(sig))}`;
 }
 
 async function verifyToken(env: Env, token: string): Promise<Record<string, unknown> | null> {
   const [body, sig] = token.split('.');
   if (!body || !sig) return null;
-  const expected = await hmacSign(env.HMAC_SECRET, body);
-  if (expected !== sig) return null;
+  // crypto.subtle.verify compares the MAC in constant time, so a byte-leak timing attack can't
+  // iterate signatures byte by byte the way a plain string compare would allow.
+  const key = await importHmacKey(env.HMAC_SECRET, 'verify');
+  let sigBytes: Uint8Array;
+  try { sigBytes = b64urlToBytes(sig); } catch { return null; }
+  const ok = await crypto.subtle.verify('HMAC', key, sigBytes as BufferSource, new TextEncoder().encode(body));
+  if (!ok) return null;
   try { return JSON.parse(b64url.decode(body)); } catch { return null; }
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 function requireAdmin(c: any): Response | null {
   const auth = c.req.header('authorization') || '';
   const expected = `Bearer ${c.env.ADMIN_TOKEN}`;
-  if (auth !== expected || !c.env.ADMIN_TOKEN) {
+  if (!c.env.ADMIN_TOKEN || !constantTimeEqual(auth, expected)) {
     return new Response('forbidden', { status: 403 });
   }
   return null;
@@ -108,20 +127,19 @@ app.post('/api/license/activate', async (c) => {
     .first<any>();
 
   if (!existing) {
-    // Count active activations on this license.
-    const count = await c.env.DB
-      .prepare('SELECT COUNT(*) AS n FROM activations WHERE license_key = ? AND revoked_at IS NULL')
-      .bind(license.key)
-      .first<any>();
-    if (count && count.n >= license.max_devices) {
+    // Guarded INSERT: the row only lands if the current count of active activations is still
+    // below max_devices. Two concurrent activations on a solo license race the subquery here,
+    // and only one wins — the other sees `meta.changes === 0` and is refused.
+    const insert = await c.env.DB
+      .prepare(
+        'INSERT INTO activations (license_key, device_id, device_label, app_version) ' +
+        'SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM activations WHERE license_key = ? AND revoked_at IS NULL) < ?',
+      )
+      .bind(license.key, body.deviceId, body.deviceLabel || null, body.appVersion || null, license.key, license.max_devices)
+      .run();
+    if (!insert.meta?.changes) {
       return c.json({ ok: false, error: 'device_limit_reached', max_devices: license.max_devices }, 403);
     }
-    await c.env.DB
-      .prepare(
-        'INSERT INTO activations (license_key, device_id, device_label, app_version) VALUES (?, ?, ?, ?)',
-      )
-      .bind(license.key, body.deviceId, body.deviceLabel || null, body.appVersion || null)
-      .run();
   } else {
     await c.env.DB
       .prepare('UPDATE activations SET last_seen_at = ?, app_version = ? WHERE license_key = ? AND device_id = ?')
@@ -149,12 +167,22 @@ app.post('/api/license/activate', async (c) => {
 });
 
 // Re-validate on launch and periodically. Body: { token }. Returns ok + plan or an error reason.
+function licenseError(license: any): string | null {
+  if (!license || license.status !== 'active') return 'revoked';
+  if (license.expires_at && license.expires_at < Date.now()) return 'expired';
+  return null;
+}
+
+function hasValidClaims(claims: any): claims is { k: string; d: string } {
+  return !!claims && typeof claims.k === 'string' && typeof claims.d === 'string';
+}
+
 app.post('/api/license/validate', async (c) => {
   const body = await c.req.json<any>().catch(() => null);
   if (!body?.token) return badRequest('token required');
 
   const claims = await verifyToken(c.env, body.token);
-  if (!claims || typeof claims.k !== 'string' || typeof claims.d !== 'string') {
+  if (!hasValidClaims(claims)) {
     return c.json({ ok: false, error: 'invalid_token' }, 401);
   }
 
@@ -162,8 +190,8 @@ app.post('/api/license/validate', async (c) => {
     .prepare('SELECT * FROM licenses WHERE key = ?')
     .bind(claims.k)
     .first<any>();
-  if (!license || license.status !== 'active') return c.json({ ok: false, error: 'revoked' }, 403);
-  if (license.expires_at && license.expires_at < Date.now()) return c.json({ ok: false, error: 'expired' }, 403);
+  const licErr = licenseError(license);
+  if (licErr) return c.json({ ok: false, error: licErr }, 403);
 
   const act = await c.env.DB
     .prepare('SELECT * FROM activations WHERE license_key = ? AND device_id = ? AND revoked_at IS NULL')
@@ -184,16 +212,32 @@ app.post('/api/license/validate', async (c) => {
 
 // ───────────────────────────────────────────────── telemetry endpoints
 
+// Checks the signed token on a telemetry request. Trusts licenseKey + deviceId from the token
+// claims rather than the body, so a scanner can't flood the DB or spoof another user's license key.
+async function authTelemetry(c: any, body: any): Promise<Record<string, unknown> | Response> {
+  if (!body?.token) return new Response(JSON.stringify({ ok: false, error: 'token_required' }), { status: 401, headers: { 'content-type': 'application/json' } });
+  const claims = await verifyToken(c.env, String(body.token));
+  if (!claims || typeof claims.k !== 'string' || typeof claims.d !== 'string') {
+    return new Response(JSON.stringify({ ok: false, error: 'invalid_token' }), { status: 401, headers: { 'content-type': 'application/json' } });
+  }
+  if (body.deviceId && String(body.deviceId) !== claims.d) {
+    return new Response(JSON.stringify({ ok: false, error: 'device_mismatch' }), { status: 401, headers: { 'content-type': 'application/json' } });
+  }
+  return claims;
+}
+
 app.post('/api/telemetry/event', async (c) => {
   const body = await c.req.json<any>().catch(() => null);
-  if (!body?.deviceId || !body?.name) return badRequest('deviceId and name required');
+  if (!body?.name) return badRequest('name required');
+  const auth = await authTelemetry(c, body);
+  if (auth instanceof Response) return auth;
   await c.env.DB
     .prepare(
       'INSERT INTO telemetry_events (device_id, license_key, app_version, os, name, props) VALUES (?, ?, ?, ?, ?, ?)',
     )
     .bind(
-      String(body.deviceId).slice(0, 128),
-      body.licenseKey ? String(body.licenseKey).slice(0, 64) : null,
+      String(auth.d).slice(0, 128),
+      String(auth.k).slice(0, 64),
       body.appVersion ? String(body.appVersion).slice(0, 32) : null,
       body.os ? String(body.os).slice(0, 32) : null,
       String(body.name).slice(0, 64),
@@ -205,14 +249,16 @@ app.post('/api/telemetry/event', async (c) => {
 
 app.post('/api/telemetry/error', async (c) => {
   const body = await c.req.json<any>().catch(() => null);
-  if (!body?.deviceId || !body?.message) return badRequest('deviceId and message required');
+  if (!body?.message) return badRequest('message required');
+  const auth = await authTelemetry(c, body);
+  if (auth instanceof Response) return auth;
   await c.env.DB
     .prepare(
       'INSERT INTO telemetry_errors (device_id, license_key, app_version, os, kind, message, stack, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .bind(
-      String(body.deviceId).slice(0, 128),
-      body.licenseKey ? String(body.licenseKey).slice(0, 64) : null,
+      String(auth.d).slice(0, 128),
+      String(auth.k).slice(0, 64),
       body.appVersion ? String(body.appVersion).slice(0, 32) : null,
       body.os ? String(body.os).slice(0, 32) : null,
       String(body.kind || 'generic').slice(0, 32),
@@ -251,6 +297,36 @@ app.post('/admin/license', async (c) => {
   return c.json({ ok: true, key: body.key });
 });
 
+const BETA_MAX_DEVICES = 2;
+
+/** TS-XXXX-XXXX-XXXX. 32 symbols (no 0/O/1/I) divide 256 evenly, so every symbol is equally likely. */
+function newLicenseKey(): string {
+  const symbols = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const chars = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => symbols[b % 32]).join('');
+  return `TS-${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8)}`;
+}
+
+// Free beta: returns the email's license, creating it on the first call. Safe to repeat: the
+// insert and its NOT EXISTS check are one statement, so two calls at once still make one license.
+// Body: { email }.
+app.post('/admin/beta-license', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const body = await c.req.json<any>().catch(() => null);
+  const email = String(body?.email ?? '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest('valid email required');
+  await c.env.DB
+    .prepare("INSERT INTO licenses (key, email, plan, max_devices) SELECT ?, ?, 'beta', ? WHERE NOT EXISTS (SELECT 1 FROM licenses WHERE lower(email) = ?)")
+    .bind(newLicenseKey(), email, BETA_MAX_DEVICES, email)
+    .run();
+  const license = await c.env.DB
+    .prepare(`SELECT l.key, l.plan, l.status, l.max_devices, l.created_at,
+      (SELECT COUNT(*) FROM activations a WHERE a.license_key = l.key AND a.revoked_at IS NULL) AS active_devices
+      FROM licenses l WHERE lower(l.email) = ? ORDER BY l.created_at LIMIT 1`)
+    .bind(email)
+    .first();
+  return c.json({ ok: true, license });
+});
+
 // Revoke. Body: { key, deviceId? }. Without deviceId, revokes the whole license.
 app.post('/admin/revoke', async (c) => {
   const bad = requireAdmin(c); if (bad) return bad;
@@ -281,7 +357,7 @@ app.get('/admin/dashboard', async (c) => {
   ]);
 
   const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[c]);
-  const html = `<!doctype html><html><head><meta charset=utf-8><title>TabFleet admin</title>
+  const html = `<!doctype html><html><head><meta charset=utf-8><title>TabSolo admin</title>
 <style>
 body{background:#0a0b0f;color:#eef1f6;font:14px/1.5 -apple-system,system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 20px}
 h1,h2{letter-spacing:-.02em}h1{font-size:24px}h2{font-size:16px;color:#9aa3b2;margin-top:30px}
@@ -292,7 +368,7 @@ tr:last-child td{border-bottom:none}code{background:#171c25;padding:1px 6px;bord
 .pill{display:inline-block;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:600}
 .pill-ok{background:rgba(21,128,61,.2);color:#7bd297}.pill-bad{background:rgba(201,28,28,.2);color:#f5caca}
 </style></head><body>
-<h1>TabFleet admin</h1>
+<h1>TabSolo admin</h1>
 <h2>Licenses (${licenses.results?.length ?? 0})</h2>
 <table><tr><th>Key</th><th>Email</th><th>Plan</th><th>Devices</th><th>Status</th><th>Issued</th></tr>
 ${(licenses.results || []).map((r: any) => `<tr><td><code>${esc(r.key)}</code></td><td>${esc(r.email)}</td><td>${esc(r.plan)}</td><td>${esc(r.n)} / ${esc(r.max_devices)}</td><td><span class="pill ${r.status === 'active' ? 'pill-ok' : 'pill-bad'}">${esc(r.status)}</span></td><td>${new Date(r.created_at).toISOString().slice(0, 10)}</td></tr>`).join('')}

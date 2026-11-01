@@ -1,4 +1,4 @@
-name = "tabfleet-api"
+name = "tabsolo-api"
 main = "src/index.ts"
 compatibility_date = "2026-01-01"
 compatibility_flags = ["nodejs_compat"]
@@ -11,12 +11,12 @@ compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "tabfleet"
-database_id = "replace-me-after-running-wrangler-d1-create"
+database_name = "tabsolo"
+database_id = "829643ab-8fc0-4270-8b48-24ef140ada98"
 migrations_dir = "migrations"
 
 [vars]
 # Hard-coded, non-secret config.
-APP_NAME = "TabFleet"
+APP_NAME = "TabSolo"
 # How long a cached activation token is valid before the client must re-validate (ms).
 GRACE_PERIOD_MS = "604800000"   # 7 days

@@ -40,7 +40,9 @@ function primaryMacAddress() {
 
 function getDeviceId() {
   if (cached) return cached;
-  const parts = [os.platform(), os.hostname(), os.arch()];
+  // Omits os.hostname(): the ioreg UUID / MachineGuid is already per-machine, and folding in a
+  // user-editable hostname made a rename look like a new device and burn a license slot.
+  const parts = [os.platform(), os.arch()];
   if (process.platform === 'darwin') parts.push(readMacOsUuid() || '');
   else if (process.platform === 'win32') parts.push(readWindowsMachineGuid() || '');
   parts.push(primaryMacAddress() || '');

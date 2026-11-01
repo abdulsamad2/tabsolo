@@ -32,11 +32,19 @@ function createOrderWatcher({ seenPath, listOrders, onNewOrder, onError }) {
       const orders = Array.isArray(result?.orders) ? result.orders : [];
       // Oldest-first so new tabs open in creation order even inside one poll.
       const fresh = orders.filter((o) => o?.id && !seen.has(String(o.id))).reverse();
+      let anySeen = false;
       for (const order of fresh) {
-        seen.add(String(order.id));
-        try { await onNewOrder(order); } catch (err) { onError?.(err?.message || String(err)); }
+        try {
+          await onNewOrder(order);
+          // Only remember the order once the handler accepted it — a transient failure (window
+          // closed mid-poll, OOM, main-process throw) must leave it unseen so the next tick retries.
+          seen.add(String(order.id));
+          anySeen = true;
+        } catch (err) {
+          onError?.(err?.message || String(err));
+        }
       }
-      if (fresh.length > 0) saveSeen(seenPath, trim(seen));
+      if (anySeen) saveSeen(seenPath, trim(seen));
     } catch (err) {
       onError?.(err?.message || String(err));
     } finally {
@@ -76,7 +84,9 @@ function loadSeen(seenPath) {
 function saveSeen(seenPath, set) {
   try {
     fs.mkdirSync(path.dirname(seenPath), { recursive: true });
-    fs.writeFileSync(seenPath, JSON.stringify([...set]));
+    const tmp = `${seenPath}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify([...set]));
+    fs.renameSync(tmp, seenPath);
   } catch {}
 }
 

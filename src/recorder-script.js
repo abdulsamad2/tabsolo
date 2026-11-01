@@ -66,12 +66,14 @@ function buildRecorderScript() {
 
     const post = (payload) => {
       try {
+        // Target the page's own origin so an ad iframe or third-party widget on the recorded page
+        // can't receive the typed values via its own window.addEventListener('message', …).
         window.postMessage({
           __fleetRecord: true,
           ...payload,
           url: location.href,
           t: Date.now(),
-        }, '*');
+        }, '/');
       } catch (_) {}
     };
 

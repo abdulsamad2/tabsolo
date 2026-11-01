@@ -57,15 +57,22 @@ async function findRelease() {
   return null;
 }
 
-/** Compares dotted numeric versions; returns >0 when a is newer than b. */
+/** Semver order, a prerelease before its release (0.2.0-beta.3 < 0.2.0); returns >0 when a is newer. */
 function compareVersions(a, b) {
-  const pa = a.replace(/^v/, '').split(/[.-]/).map(Number);
-  const pb = b.replace(/^v/, '').split(/[.-]/).map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
+  const parse = (v) => {
+    const [core, ...pre] = v.replace(/^v/, '').split('-');
+    return { core: core.split('.').map(Number), pre: pre.join('-') };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa.core[i] || 0) - (pb.core[i] || 0);
     if (diff) return diff;
   }
-  return 0;
+  if (pa.pre === pb.pre) return 0;
+  if (!pa.pre) return 1;
+  if (!pb.pre) return -1;
+  return pa.pre.localeCompare(pb.pre, undefined, { numeric: true });
 }
 
 async function prepare() {
@@ -97,9 +104,10 @@ async function finalize() {
   const release = await findRelease();
   if (!release) fail(`No release found for ${tag}. Run "prepare" first.`);
   const names = release.assets.map((a) => a.name);
-  const manifests = names.filter((n) => /^latest(-mac|-linux)?\.yml$/.test(n));
+  // A beta version writes beta*.yml instead of latest*.yml.
+  const manifests = names.filter((n) => /^(latest|beta|alpha)(-mac|-linux)?\.yml$/.test(n));
   if (manifests.length === 0) {
-    fail(`${tag} has no latest*.yml update manifest — the build/upload must have failed. Not publishing.`);
+    fail(`${tag} has no update manifest (latest*.yml / beta*.yml) — the build/upload must have failed. Not publishing.`);
   }
   if (release.draft) {
     await api('PATCH', `/releases/${release.id}`, { draft: false, make_latest: 'true' });

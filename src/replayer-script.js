@@ -67,7 +67,13 @@ function buildReplayerScript(actions, { runId = 'default', stepDelayMs = 900, lo
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const waitWhilePaused = async () => { while (RUN_STATE.paused && !RUN_STATE.aborted) await sleep(120); };
-    const report = (step, status, detail) => window.postMessage({ __fleetReplay: true, runId: PAYLOAD.runId, step, status, detail }, '*');
+    // A step that starts a navigation leaves the old page alive until the new one commits. Hold
+    // still so the next step doesn't run on the departing page; main re-injects on the new page.
+    // If the navigation never happens (download, cancelled), carry on after 8s.
+    let leavingAt = 0;
+    window.addEventListener('beforeunload', () => { leavingAt = Date.now(); });
+    const waitIfLeaving = async () => { while (leavingAt && Date.now() - leavingAt < 8000) await sleep(200); leavingAt = 0; };
+    const report = (step, status, detail) => window.postMessage({ __fleetReplay: true, runId: PAYLOAD.runId, step, status, detail }, '/');
 
     // ------------------------------------------------------------- Deep DOM traversal
     // Walk document + every same-origin iframe body + every open shadow root. Returns all matches
@@ -148,16 +154,28 @@ function buildReplayerScript(actions, { runId = 'default', stepDelayMs = 900, lo
     const findTarget = (el) => {
       if (!el) return null;
       const tried = new Set();
+      // Several elements can share an attribute (every offer card has the same data-bdd); prefer
+      // the one whose text is exactly what was recorded.
+      const byText = (list) => {
+        if (!el.text || list.length < 2) return list;
+        const exact = list.filter((n) => (n.textContent || '').trim() === el.text);
+        return exact.length ? exact : list;
+      };
       const run = (selector) => {
         if (!selector || tried.has(selector)) return null;
         tried.add(selector);
-        try { return pickBest(queryAll(selector)); } catch (_) { return null; }
+        try { return pickBest(byText(queryAll(selector))); } catch (_) { return null; }
       };
 
-      // 1. Stable data attributes.
+      // 1. Recorded id, then stable attributes. A bare [type=submit] is not one: it matches every
+      // submit button on the page, so it was clicking the wrong form.
+      if (el.id) {
+        const hit = run('#' + CSS.escape(el.id));
+        if (hit) return hit;
+      }
       if (el.attrs) {
         const stable = ['data-section-name','data-row-name','data-seat-name','data-seat','data-tid',
-                        'data-testid','data-bdd','name','id','href','type'];
+                        'data-testid','data-bdd','name','placeholder','href'];
         for (const k of stable) {
           const v = el.attrs[k];
           if (!v) continue;
@@ -182,7 +200,10 @@ function buildReplayerScript(actions, { runId = 'default', stepDelayMs = 900, lo
             }
           } catch (_) {}
         }
-        const hit = pickBest(candidates);
+        // Innermost first: pickBest keeps the first of equal scores, and a wrapper div whose text
+        // merely starts with the needle is longer than the element that was actually clicked.
+        candidates.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
+        const hit = pickBest(byText(candidates));
         if (hit) return hit;
       }
       // 4. CSS path as last resort.
@@ -287,6 +308,7 @@ function buildReplayerScript(actions, { runId = 'default', stepDelayMs = 900, lo
       let shownWaiting = false;
       while (Date.now() - started < PAYLOAD.lookupMaxMs) {
         if (RUN_STATE.aborted) return null;
+        await waitIfLeaving();
         await waitWhilePaused();
         const captcha = detectCaptcha();
         if (captcha) { await waitForCaptchaCleared(captcha); continue; }
@@ -315,6 +337,7 @@ function buildReplayerScript(actions, { runId = 'default', stepDelayMs = 900, lo
 
     // ------------------------------------------------------------- Main loop
     for (let i = 0; i < PAYLOAD.actions.length; i++) {
+      await waitIfLeaving();
       if (window.__fleetReplayRun !== PAYLOAD.runId || RUN_STATE.aborted) { report(i, 'cancelled'); break; }
       await waitWhilePaused();
 
@@ -368,6 +391,11 @@ function buildReplayerScript(actions, { runId = 'default', stepDelayMs = 900, lo
             const target = findTarget(action.el) || document.activeElement || document.body;
             target.dispatchEvent(new KeyboardEvent('keydown', { key: action.key, bubbles: true, cancelable: true }));
             report(i, 'keydown', action.key);
+            done = true;
+          } else if (action.type === 'wait') {
+            const ms = Math.max(0, Math.min(60000, Number(action.ms) || 0));
+            await sleep(ms);
+            report(i, 'wait', ms + 'ms');
             done = true;
           } else {
             report(i, 'skip', action.type);

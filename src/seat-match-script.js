@@ -44,15 +44,22 @@ function buildSeatMatchScript(order) {
       'padding:10px 14px','border-radius:8px','box-shadow:0 6px 20px rgba(0,0,0,.35)',
       'max-width:360px','pointer-events:auto','cursor:default','border:1px solid #333',
     ].join(';');
-    banner.innerHTML = \`
-      <div style="opacity:.6;font-weight:500;font-size:11px;letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px">
-        TabFleet · Order #\${ORDER.orderId}
-      </div>
-      <div id="__fleet-seat-status">Scanning seatmap for Sec \${ORDER.section || '?'} Row \${ORDER.row || '?'} Seats \${seats.join('–') || '?'}…</div>
-      <div style="opacity:.7;font-size:11px;margin-top:6px"><kbd style="background:#333;padding:1px 5px;border-radius:3px">⌘ Enter</kbd> jump to match</div>
-    \`;
+    // Build with createElement + textContent so a hostile order field (section, row, orderId, seat
+     // range) can't break out of the HTML context and run JS in the ticketmaster.com origin.
+    const header = document.createElement('div');
+    header.style.cssText = 'opacity:.6;font-weight:500;font-size:11px;letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px';
+    header.textContent = \`TabSolo · Order #\${ORDER.orderId}\`;
+    const status = document.createElement('div');
+    status.id = '__fleet-seat-status';
+    status.textContent = \`Scanning seatmap for Sec \${ORDER.section || '?'} Row \${ORDER.row || '?'} Seats \${seats.join('–') || '?'}…\`;
+    const hint = document.createElement('div');
+    hint.style.cssText = 'opacity:.7;font-size:11px;margin-top:6px';
+    const kbd = document.createElement('kbd');
+    kbd.style.cssText = 'background:#333;padding:1px 5px;border-radius:3px';
+    kbd.textContent = '⌘ Enter';
+    hint.append(kbd, ' jump to match');
+    banner.append(header, status, hint);
     document.documentElement.appendChild(banner);
-    const status = banner.querySelector('#__fleet-seat-status');
     const setStatus = (text, color = '#fff') => { status.textContent = text; banner.style.borderColor = color; };
 
     // ----- Section matching ----------------------------------------------------------------------

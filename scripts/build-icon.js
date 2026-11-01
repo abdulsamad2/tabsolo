@@ -15,7 +15,7 @@ const zlib = require('node:zlib');
 
 const PNG_SIZE = 512;
 const ICO_SIZE = 256;
-const BG = [28, 126, 214, 255];       // #1c7ed6 — TabFleet accent
+const BG = [28, 126, 214, 255];       // #1c7ed6 — TabSolo accent
 const HI = [255, 255, 255, 36];       // soft diagonal highlight
 
 /** Writes a solid-rounded-square RGBA pixel buffer with a diagonal highlight overlay. */
@@ -44,7 +44,7 @@ function makePixels(SIZE) {
       buf[i] = r; buf[i + 1] = g; buf[i + 2] = b; buf[i + 3] = Math.round(a * (BG[3] / 255));
     }
   }
-  // Overlay a bold white letter "T" (TabFleet mark) centred, 160×140.
+  // Overlay a bold white letter "T" (TabSolo mark) centred, 160×140.
   const letterTop = 72 * k, letterLeft = 70 * k, letterRight = 186 * k, letterStemLeft = 115 * k, letterStemRight = 141 * k, letterBottom = 192 * k;
   const barThickness = 22 * k;
   const letterA = 240;

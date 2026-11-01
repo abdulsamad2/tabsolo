@@ -1071,9 +1071,21 @@ function mergeImported(existing, imported) {
       holder.profile = label;
     }
     if (index !== -1) {
-      const { id, pinnedProxy = null, sessionKey = '' } = merged[index];
-      merged[index] = { ...profile, id, pinnedProxy, sessionKey };
-      used.add(id);
+      // Keep each saved field unless the imported row carries a non-empty replacement. A CSV with
+      // only Email/Name columns used to overwrite the saved password, cards, resolvers and address
+      // with empty strings — silent data loss. Fields the editor UI explicitly clears go through
+      // buildProfile, not through here.
+      const existing = merged[index];
+      const isPresent = (v) => Array.isArray(v) ? v.length > 0 : (typeof v === 'string' ? v !== '' : v != null);
+      const next = { ...existing };
+      for (const key of Object.keys(profile)) {
+        if (isPresent(profile[key])) next[key] = profile[key];
+      }
+      next.id = existing.id;
+      next.pinnedProxy = existing.pinnedProxy ?? null;
+      next.sessionKey = existing.sessionKey ?? '';
+      merged[index] = next;
+      used.add(existing.id);
     } else {
       merged.push(profile);
       used.add(profile.id);

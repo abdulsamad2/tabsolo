@@ -1,6 +1,6 @@
 'use strict';
 
-// Single source of truth for every rebindable action in TabFleet. The shortcuts sheet reads this
+// Single source of truth for every rebindable action in TabSolo. The shortcuts sheet reads this
 // list to render editable rows; main.js reads it to build menu accelerators; the renderer reads it
 // to match in-window keystrokes. Keep IDs stable — stored overrides key off them.
 //
@@ -10,7 +10,7 @@
 //   group     : section title ("Navigation", "Multi-tab", "Audio", ...) to cluster the sheet
 //   accelerator : default Chromium accelerator string ('CmdOrCtrl+1', 'Ctrl+Tab', …)
 //   scope     : 'menu' (goes through a menu accelerator; works even in page focus),
-//                'renderer' (only fires when TabFleet UI has focus),
+//                'renderer' (only fires when TabSolo UI has focus),
 //                'both' (menu + renderer handler, like multi-tab shortcuts)
 //   description : one line explaining what it does
 //   command   : the IPC command name sent to main when the renderer handles the key (optional for pure menu actions)

@@ -9,7 +9,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'tabfleet-load-'));
+const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'tabsolo-load-'));
 app.setPath('userData', userData);
 const TABS = 10;
 const requests = []; // { start, end, tab }

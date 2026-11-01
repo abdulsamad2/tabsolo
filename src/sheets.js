@@ -1,7 +1,7 @@
 'use strict';
 
 // Override for tests; always points at docs.google.com in production.
-const SHEETS_BASE = process.env.TABFLEET_SHEETS_BASE || 'https://docs.google.com';
+const SHEETS_BASE = process.env.TABSOLO_SHEETS_BASE || 'https://docs.google.com';
 const BASE_HOST = new URL(SHEETS_BASE).host;
 
 /**

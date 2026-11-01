@@ -54,7 +54,10 @@ function savePlaybook(baseDir, { id, name, hostPatterns, actions }) {
   };
   const safeName = playbook.name.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 60) || 'playbook';
   const fileName = `${safeName}-${playbook.id.slice(0, 8)}.json`;
-  fs.writeFileSync(path.join(dir, fileName), JSON.stringify(playbook, null, 2));
+  const target = path.join(dir, fileName);
+  const tmp = `${target}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(playbook, null, 2));
+  fs.renameSync(tmp, target);
   return { ...playbook, fileName };
 }
 
@@ -147,4 +150,15 @@ function substitute(action, liveOrder) {
   return action;
 }
 
-module.exports = { listPlaybooks, savePlaybook, readPlaybook, deletePlaybook, autoBindVariables, substitute };
+const REDACTED = /^\[redacted \d+ chars\]$/;
+
+/** The recorder stores secrets as "[redacted N chars]"; replay must never type that. A password
+ * field takes the tab profile's password; any other redacted field becomes a skipped step. */
+function fillRedacted(action, profile) {
+  if (action.type !== 'input' || !REDACTED.test(String(action.value ?? ''))) return action;
+  const isPassword = action.el?.attrs?.type === 'password' || /pass/i.test(action.el?.attrs?.name || '');
+  if (isPassword && profile?.password) return { ...action, value: profile.password };
+  return { ...action, type: 'skip' };
+}
+
+module.exports = { listPlaybooks, savePlaybook, readPlaybook, deletePlaybook, autoBindVariables, substitute, fillRedacted };

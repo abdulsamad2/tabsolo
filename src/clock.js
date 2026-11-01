@@ -1,6 +1,6 @@
 'use strict';
 
-// The clock pages see is the clock of the computer they run on: TabFleet sets that clock's timezone to
+// The clock pages see is the clock of the computer they run on: TabSolo sets that clock's timezone to
 // where the proxies are (see main.js "Clock"), rather than altering anything inside the browser.
 
 // IANA timezone → Windows timezone id (from CLDR's windowsZones), for `tzutil /s`.

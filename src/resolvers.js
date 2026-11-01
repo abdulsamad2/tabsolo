@@ -153,7 +153,7 @@ async function fetchTextChest(entry, profile) {
     }
   }
   // Default URL from TextChest's own REST docs; env var still overrides.
-  const base = process.env.TABFLEET_TEXTCHEST_URL || 'https://api.textchest.com/sms';
+  const base = process.env.TABSOLO_TEXTCHEST_URL || 'https://api.textchest.com/sms';
   const sep = base.includes('?') ? '&' : '?';
   const asyncParam = isAsync ? 'async_inbox=true&' : '';
   const url = `${base}${sep}${asyncParam}number=${encodeURIComponent(number)}&limit=10`;
@@ -219,7 +219,7 @@ function pickMessageBody(data) {
 
 /**
  * Fetches a site-specific password for `profile.email` from Automatiq. The exact endpoint is not
- * documented publicly; override with TABFLEET_AUTOMATIQ_URL (placeholders: {token}, {email},
+ * documented publicly; override with TABSOLO_AUTOMATIQ_URL (placeholders: {token}, {email},
  * {company}, {site}). The default is a reasonable guess — users seeing "#API ERROR" should set
  * this to the URL from their Automatiq onboarding.
  */
@@ -241,10 +241,11 @@ async function fetchAutomatiq(entry, profile, tabUrl) {
       return { error: '#NO ACCOUNT FOR URL' };
     }
   }
-  const template = process.env.TABFLEET_AUTOMATIQ_URL
+  const template = process.env.TABSOLO_AUTOMATIQ_URL
     || 'https://api.automatiq.com/v1/accounts?email={email}&company_id={company}&site_id={site}';
+  // {token} intentionally not substituted: the bearer goes in the Authorization header below.
+  // Putting it in the URL would land it in access logs, proxy logs, and Chromium's net log.
   const url = template
-    .replace('{token}', encodeURIComponent(token))
     .replace('{email}', encodeURIComponent(profile.email))
     .replace('{company}', encodeURIComponent(company))
     .replace('{site}', encodeURIComponent(String(siteId)));

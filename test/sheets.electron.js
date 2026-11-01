@@ -1,7 +1,7 @@
 'use strict';
 
 // Google Sheets import end-to-end check, run by test/run-electron-tests.js.
-// A local HTTP server pretends to be the Google Sheets host; TabFleet opens the sheet in a tab
+// A local HTTP server pretends to be the Google Sheets host; TabSolo opens the sheet in a tab
 // and reads its CSV export via that tab's own session — no OAuth, no tokens.
 
 const { app, BrowserWindow } = require('electron');
@@ -11,7 +11,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'tabfleet-sheets-'));
+const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'tabsolo-sheets-'));
 const outDir = process.env.E2E_OUT ?? userData;
 app.setPath('userData', userData);
 
@@ -71,7 +71,7 @@ async function waitFor(check, label, timeout = 15000) {
 
 sheetHost.listen(0, '127.0.0.1', () => {
   const { port } = sheetHost.address();
-  process.env.TABFLEET_SHEETS_BASE = `http://127.0.0.1:${port}`;
+  process.env.TABSOLO_SHEETS_BASE = `http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(userData, 'config.json'), JSON.stringify({
     startURL: 'about:blank', tabCount: 1, isolation: 'perTab', proxySource: 'none',
   }));
@@ -92,7 +92,7 @@ app.whenReady().then(async () => {
     await waitFor(() => ui(`!document.querySelector('#sheet-import').hidden`), 'sheet form visible');
 
     // Submit the sheet URL; the mock host receives it and the sheet tab opens.
-    const sheetUrl = `${process.env.TABFLEET_SHEETS_BASE}/spreadsheets/d/${SHEET_ID}/edit`;
+    const sheetUrl = `${process.env.TABSOLO_SHEETS_BASE}/spreadsheets/d/${SHEET_ID}/edit`;
     await ui(`(() => {
       const form = document.querySelector('#sheet-import');
       form.elements.url.value = ${JSON.stringify(sheetUrl)};
@@ -125,7 +125,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(outDir, 'group-choose.png'), (await win.webContents.capturePage()).toPNG());
     await ui(`document.querySelector('#group-list li[data-group="WiLL"] [data-action="choose"]').click()`);
     await waitFor(() => ui(`document.querySelector('#group-sheet').hidden && document.querySelector('.group-badge-name').textContent === 'WiLL'`), 'working in WiLL');
-    assert.equal(win.getTitle(), 'TabFleet — WiLL', 'the window title shows the group');
+    assert.equal(win.getTitle(), 'TabSolo — WiLL', 'the window title shows the group');
 
     // Only WiLL's accounts are offered; NX accounts are refused even through a direct command.
     await ui(`document.querySelector('#profile-picker-btn').click()`);
@@ -143,7 +143,7 @@ app.whenReady().then(async () => {
     await waitFor(() => ui(`!document.querySelector('#group-sheet').hidden`), 'group dialog');
     assert.equal(await ui(`document.querySelectorAll('#group-list [data-action="choose"]').length`), 0, 'no switching during a session');
     assert.equal(await ui(`document.querySelector('#group-list li.current .group-current-tag').textContent`), '🔒 This session');
-    assert.equal(await ui(`!document.querySelector('#group-locked-note').hidden && document.querySelector('#group-restart').textContent`), 'Restart TabFleet…');
+    assert.equal(await ui(`!document.querySelector('#group-locked-note').hidden && document.querySelector('#group-restart').textContent`), 'Restart TabSolo…');
     assert.match((await ui(`window.fleet.switchGroup({ group: 'NX SLOT 1' })`)).error, /one group per session/, 'the core refuses too');
     await ui(`document.head.append(Object.assign(document.createElement('style'), { textContent: '*{animation:none!important}' }))`);
     await sleep(300);
@@ -171,7 +171,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(outDir, 'group-start.png'), (await win.webContents.capturePage()).toPNG());
     await ui(`document.querySelector('#launch-form button[type=submit]').click()`);
     await waitFor(() => ui(`!document.querySelector('#browser').hidden && document.querySelector('.group-badge-name').textContent === 'Boss team'`), 'working in Boss team');
-    assert.equal(win.getTitle(), 'TabFleet — Boss team');
+    assert.equal(win.getTitle(), 'TabSolo — Boss team');
     assert.ok(!JSON.parse(fs.readFileSync(path.join(userData, 'config.json'), 'utf8')).group, 'the group is not saved as a launch setting');
     await ui(`window.fleet.importFromSheet(${JSON.stringify(sheetUrl)})`);
     assert.equal((await ui('window.fleet.listProfiles()')).length, 4, 're-import updates instead of duplicating');

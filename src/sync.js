@@ -48,7 +48,9 @@ function describeFailure(status, body) {
     detail = data.error ?? data.message ?? data.errors?.[0]?.detail ?? data.errors?.[0]?.title ?? '';
     if (typeof detail !== 'string') detail = JSON.stringify(detail);
   } catch {}
-  return `Automatiq returned HTTP ${status}${detail ? `: ${detail.slice(0, 160)}` : ''}.`;
+  // Control chars out so a hostile upstream can't break the toast or hide text; cap length.
+  const clean = String(detail).replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 160);
+  return `Automatiq returned HTTP ${status}${clean ? `: ${clean}` : ''}.`;
 }
 
 /**

@@ -1,13 +1,13 @@
-# TabFleet
+# TabSolo (beta)
 
 **One browser. Every tab its own session.**
 
-TabFleet is a desktop browser for Windows and macOS where every tab has its own cookies, storage
+TabSolo is a desktop browser for Windows and macOS where every tab has its own cookies, storage
 and logins, and its own IP address. Run dozens of accounts side by side, swap a tab to a fresh IP
 without logging out, and keep each profile's session exactly where you left it.
 
-[**Download**](https://github.com/abdulsamad2/tab_fleet/releases/latest) ·
-[Website](https://abdulsamad2.github.io/tab_fleet/)
+[**Download**](https://github.com/abdulsamad2/tabsolo/releases/latest) ·
+[Website](https://tabsolo.com)
 
 ---
 
@@ -50,12 +50,12 @@ HTTP(S) proxies support usernames and passwords. SOCKS5 proxies work without aut
 
 ## Install
 
-Download the latest build from [Releases](https://github.com/abdulsamad2/tab_fleet/releases/latest):
+Download the latest build from [Releases](https://github.com/abdulsamad2/tabsolo/releases/latest):
 
-- **Windows:** `TabFleet-Setup-<version>.exe` (installer) or `TabFleet-<version>.exe` (portable). If
+- **Windows:** `TabSolo-Setup-<version>.exe` (installer) or `TabSolo-<version>.exe` (portable). If
   SmartScreen warns, choose *More info → Run anyway*.
-- **macOS:** `TabFleet-<version>-arm64.dmg` (Apple silicon) or `TabFleet-<version>.dmg` (Intel). The
-  build isn't notarised yet: the first time, right-click TabFleet in Applications and choose *Open*.
+- **macOS:** `TabSolo-<version>-arm64.dmg` (Apple silicon) or `TabSolo-<version>.dmg` (Intel). The
+  build isn't notarised yet: the first time, right-click TabSolo in Applications and choose *Open*.
 
 The Windows version updates itself (on launch and every two hours, installed on restart). On macOS,
 download new versions from Releases until the build is signed.

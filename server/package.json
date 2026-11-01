@@ -1,14 +1,14 @@
 {
-  "name": "tabfleet-api",
+  "name": "tabsolo-api",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:create": "wrangler d1 create tabfleet",
-    "db:migrate:local": "wrangler d1 migrations apply tabfleet --local",
-    "db:migrate:prod": "wrangler d1 migrations apply tabfleet --remote",
-    "license:issue": "wrangler d1 execute tabfleet --remote --command \"INSERT INTO licenses (key, email, plan, max_devices) VALUES ('TF-DEMO-1234-5678', 'demo@example.com', 'solo', 1)\""
+    "db:create": "wrangler d1 create tabsolo",
+    "db:migrate:local": "wrangler d1 migrations apply tabsolo --local",
+    "db:migrate:prod": "wrangler d1 migrations apply tabsolo --remote",
+    "license:issue": "wrangler d1 execute tabsolo --remote --command \"INSERT INTO licenses (key, email, plan, max_devices) VALUES ('TF-DEMO-1234-5678', 'demo@example.com', 'solo', 1)\""
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",

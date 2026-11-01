@@ -20,10 +20,10 @@ for (const file of ['.env.local', '.env']) {
 }
 
 const {
-  app, BrowserWindow, WebContentsView, Menu, Notification, clipboard, dialog, ipcMain, net, safeStorage, session,
+  app, BrowserWindow, WebContentsView, Menu, Notification, clipboard, dialog, ipcMain, net, safeStorage, session, shell,
 } = require('electron');
 const { randomUUID, randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
-const { normalizeConfig, validateConfig, createPool, fetchRemoteProxyList, proxyRule, proxyLabel, proxyKey, parseProxy, parseProxyList, toURL } = require('./proxy');
+const { normalizeConfig, validateConfig, createPool, fetchRemoteProxyList, proxyRule, proxyLabel, proxyKey, parseProxy, parseProxyList, serializeProxyLine, toURL } = require('./proxy');
 const { checkProxies: checkProxyReputations } = require('./reputation');
 const { createOrderWatcher } = require('./orderWatcher');
 const { createOrderStatusStore } = require('./orderStatus');
@@ -43,7 +43,7 @@ const { windowsZoneFor, majorityZone } = require('./clock');
 const { execFile, execFileSync } = require('node:child_process');
 
 // Scrub the automation tells out of the UA and client hints before any session is created. Electron's
-// default UA is "...TabFleet/1.3.10 Chrome/<ver> Electron/45.0.0 Safari/537.36", which every anti-bot
+// default UA is "...TabSolo/1.3.10 Chrome/<ver> Electron/45.0.0 Safari/537.36", which every anti-bot
 // stack (Cloudflare, DataDome, Akamai, PerimeterX) treats as a bot. Replace it with the matching stock
 // Chrome UA built from Electron's bundled Chromium version so the UA, Sec-CH-UA brands, and the JS
 // feature set that pages actually see all agree.
@@ -64,6 +64,13 @@ app.userAgentFallback = CLEAN_USER_AGENT;
 // language is English). Must run before app ready.
 const CLEAN_ACCEPT_LANGUAGE = 'en-US,en;q=0.9';
 app.commandLine.appendSwitch('lang', 'en-US');
+// Block Chromium's silent NTLM/Negotiate response on Windows — an unrestricted allowlist by default
+// means an AD-joined machine would send DOMAIN\user credentials to any intranet host that asks.
+// Must be set before app.ready.
+const { windowsAuthSwitches } = require('./platform-session');
+for (const [key, value] of windowsAuthSwitches(process.platform)) {
+  app.commandLine.appendSwitch(key, value);
+}
 const STEALTH_PRELOAD = path.join(__dirname, 'stealth-preload.js');
 
 // Stable per-session fingerprint seed. Same partition → same seed (so every tab under one profile
@@ -78,7 +85,7 @@ function partitionSeed(partition) {
   return (hash >>> 0).toString(16);
 }
 
-// Rewrites the TabFleet/Electron tokens out of request headers for a session. Chromium builds Sec-CH-UA
+// Rewrites the TabSolo/Electron tokens out of request headers for a session. Chromium builds Sec-CH-UA
 // from the product name set at compile time, so onBeforeSendHeaders is the only reliable place to
 // override it. Idempotent: each session is patched once; later calls for the same session are no-ops.
 // Also installs a default-deny permission handler so sites can't silently get mic/camera/geolocation
@@ -196,7 +203,7 @@ async function saveSyncCredentials(input) {
   syncCredentials = { companyId, apiToken };
   if (!(await safeStorage.isAsyncEncryptionAvailable())) {
     writeData('sync.json', { companyId });
-    return { ...syncSettingsInfo(), warning: 'Your system keychain is unavailable, so the API token is kept only until TabFleet quits.' };
+    return { ...syncSettingsInfo(), warning: 'Your system keychain is unavailable, so the API token is kept only until TabSolo quits.' };
   }
   writeData('sync.json', {
     companyId,
@@ -214,7 +221,7 @@ function ensureOrderStatusStore() {
 }
 
 async function listSyncOrders(params) {
-  const baseURL = process.env.TABFLEET_SYNC_URL || sync.SYNC_BASE_URL;
+  const baseURL = process.env.TABSOLO_SYNC_URL || sync.SYNC_BASE_URL;
   const result = await sync.fetchOrders((url, options) => net.fetch(url, options), activeSyncCredentials(), params, baseURL);
   if (Array.isArray(result?.orders)) {
     const store = ensureOrderStatusStore();
@@ -302,8 +309,14 @@ function loadConfig() {
 }
 
 function writeData(name, value) {
+  // Atomic: a crash mid-write used to leave a truncated settings/session file, which the next
+  // launch silently replaced with defaults — rebindings, sync credentials, snippets and the
+  // tab-restore prompt were all lost that way.
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
-  fs.writeFileSync(dataPath(name), JSON.stringify(value, null, 2));
+  const target = dataPath(name);
+  const tmp = `${target}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+  fs.renameSync(tmp, target);
 }
 
 /** Quick-fill snippets; values are encrypted with the OS keychain (macOS Keychain / Windows DPAPI) when available. */
@@ -351,19 +364,34 @@ async function saveSnippets(list) {
  * encryption is unavailable, the profiles are saved without their secrets (see withoutSecrets), which stay
  * in memory for this run.
  */
+// Set when the file was there but could not be decoded (keychain locked, corrupt blob, …).
+// Blocks writeProfiles from overwriting the on-disk file with an empty list.
+let profilesReadError = null;
+
 async function loadProfiles() {
+  let raw;
   try {
-    const stored = JSON.parse(fs.readFileSync(dataPath('profiles.json'), 'utf8'));
+    raw = fs.readFileSync(dataPath('profiles.json'), 'utf8');
+  } catch (err) {
+    if (err?.code === 'ENOENT') { profiles = []; return; }
+    profilesReadError = err;
+    notify('Could not read saved profiles. TabSolo will keep the file as-is until the next successful read. Restart or unlock the OS keychain to retry.');
+    return;
+  }
+  try {
+    const stored = JSON.parse(raw);
     profiles = stored.encrypted
       ? JSON.parse((await safeStorage.decryptStringAsync(Buffer.from(stored.encrypted, 'base64'))).result)
       : (stored.profiles ?? []);
+    profilesReadError = null;
     // Proxies once imported from the sheet's Proxy columns aren't used (the start-screen pool is): drop them.
     if (profiles.some((p) => 'proxy' in p || 'extraProxies' in p || 'proxyIndex' in p)) {
       profiles = profiles.map(({ proxy: _proxy, extraProxies: _backups, proxyIndex: _index, ...rest }) => rest);
       saveProfiles();
     }
-  } catch {
-    profiles = [];
+  } catch (err) {
+    profilesReadError = err;
+    notify('Saved profiles could not be decrypted — keychain may be locked. The file is kept untouched; unlock and restart to recover.');
   }
 }
 
@@ -377,6 +405,9 @@ function saveProfiles() {
 }
 
 async function writeProfiles() {
+  // Refuse to overwrite if the last read failed — otherwise a decrypt failure would silently
+  // persist an empty profiles list and permanently lose cards, passwords and account logins.
+  if (profilesReadError) return;
   if (await safeStorage.isAsyncEncryptionAvailable()) {
     const encrypted = await safeStorage.encryptStringAsync(JSON.stringify(profiles));
     writeData('profiles.json', { encrypted: encrypted.toString('base64') });
@@ -384,7 +415,7 @@ async function writeProfiles() {
     writeData('profiles.json', { profiles: profiles.map(withoutSecrets) });
     if (!writeProfiles.warned) {
       writeProfiles.warned = true;
-      notify("Your system keychain is unavailable, so cards, passwords and proxy passwords are kept only until TabFleet quits. Re-import your profiles after restarting.");
+      notify("Your system keychain is unavailable, so cards, passwords and proxy passwords are kept only until TabSolo quits. Re-import your profiles after restarting.");
     }
   }
   win?.webContents.send('profiles-changed');
@@ -396,8 +427,6 @@ async function writeProfiles() {
  * name, so two groups (sheets) can each have an "OS 1.1"; an older copy saved without a group is
  * updated in place rather than duplicated.
  */
-const profileKey = (p) => `${String(p.group ?? '').toLowerCase()}\u0000${p.profile.toLowerCase()}`;
-
 function mergeProfiles(imported) {
   const merged = mergeImported(profiles, imported);
   profiles = merged.profiles;
@@ -446,6 +475,7 @@ async function saveProfileFromEditor(input) {
   }
   const { profile, errors } = buildProfile(input ?? {}, existing);
   // Names are unique within a group (as on import), so two groups can each have an "OS 1.1".
+  const profileKey = (p) => `${String(p.group ?? '').toLowerCase()}\u0000${p.profile.toLowerCase()}`;
   if (profiles.some((p) => p.id !== profile.id && profileKey(p) === profileKey(profile))) {
     errors.push(`${groupName(profile.group ?? '')} already has a profile named "${profile.profile}".`);
   }
@@ -523,7 +553,7 @@ function persistSettings() {
 
 function updateWindowTitle() {
   if (!win || win.isDestroyed()) return;
-  win.setTitle(hasActiveGroup() ? `TabFleet — ${groupName(settings.activeGroup)}` : 'TabFleet');
+  win.setTitle(hasActiveGroup() ? `TabSolo — ${groupName(settings.activeGroup)}` : 'TabSolo');
 }
 
 /** Keeps the active group valid: with a single group it's chosen automatically; otherwise the user picks. */
@@ -548,9 +578,9 @@ function ensureActiveGroup() {
 
 /**
  * The group is chosen on the start screen and stays for the whole session: accounts of different groups
- * never share a run. To work in another group the user restarts TabFleet (restartForGroup).
+ * never share a run. To work in another group the user restarts TabSolo (restartForGroup).
  */
-const GROUP_LOCKED = 'TabFleet works in one group per session. To use another group, restart TabFleet and choose it on the start screen.';
+const GROUP_LOCKED = 'TabSolo works in one group per session. To use another group, restart TabSolo and choose it on the start screen.';
 
 function setActiveGroup(key) {
   settings.activeGroup = key;
@@ -569,7 +599,7 @@ function switchGroup({ group } = {}) {
   return { ok: true };
 }
 
-/** Closes everything and starts TabFleet again, at the start screen where the group is chosen. */
+/** Closes everything and starts TabSolo again, at the start screen where the group is chosen. */
 function restartForGroup() {
   app.relaunch();
   app.quit();
@@ -935,7 +965,10 @@ async function stopRecording({ name = null, orderContext = null } = {}) {
     try {
       fs.writeFileSync(file, JSON.stringify({ actions }, null, 2));
       result.file = file;
-      notify(`Recorded ${actions.length} actions → ${file}`);
+      // Return the actions so the renderer can show a review-and-prune step before the user
+      // commits to a playbook name. The file above is the untouched backup.
+      result.actions = actions;
+      notify(`Recorded ${actions.length} actions. Review and save.`);
     } catch (error) {
       notify(`Recording stopped but could not be saved: ${error.message}`);
     }
@@ -1025,8 +1058,12 @@ async function runPlaybookOnTab(tabId, playbookId, orderContext = null) {
   const playbook = playbooksStore.readPlaybook(app.getPath('userData'), playbookId);
   if (!playbook) return { error: 'Playbook not found.' };
   const runId = randomUUID();
-  const actions = materializeActions(playbook.actions || [], orderContext || {});
-  replayRuns.set(runId, { tabId, playbookId, orderContext, startedAt: Date.now(), log: [], tab });
+  const profile = findProfile(tab.profileId);
+  const actions = materializeActions(playbook.actions || [], orderContext || {})
+    .map((action) => playbooksStore.fillRedacted(action, profile));
+  // `actions` is materialized once; `offset` is the absolute index of the injected script's step 0
+  // and `next` the absolute index of the next step to run, so resumes never jump backwards.
+  replayRuns.set(runId, { tabId, playbookId, orderContext, startedAt: Date.now(), log: [], tab, actions, offset: 0, next: 0 });
   tab.playbookRunId = runId;
   const script = buildReplayerScript(actions, { runId, stepDelayMs: 900 });
   try {
@@ -1038,21 +1075,15 @@ async function runPlaybookOnTab(tabId, playbookId, orderContext = null) {
   }
 }
 
-// When a page the replayer told the browser to navigate finishes loading, resume the playbook on
-// the remaining steps starting from where we left off. We detect "where we left off" by looking at
-// the last `log` entry's step index and continuing from there.
+// When the page navigates mid-run, re-inject the steps that haven't completed yet. Finished,
+// failed and cancelled runs are already removed from replayRuns, so they never resume.
 function maybeResumeReplayer(tab) {
-  if (!tab.playbookRunId) return;
-  const run = replayRuns.get(tab.playbookRunId);
+  const run = tab.playbookRunId && replayRuns.get(tab.playbookRunId);
   if (!run) return;
-  const lastStep = run.log.length ? run.log[run.log.length - 1] : null;
-  if (lastStep && (lastStep.status === 'done' || lastStep.status === 'cancelled' || lastStep.status === 'error' || lastStep.status === 'miss')) return;
-  const playbook = playbooksStore.readPlaybook(app.getPath('userData'), run.playbookId);
-  if (!playbook) return;
-  const resumeIndex = lastStep ? lastStep.step + 1 : 0;
-  const remaining = materializeActions((playbook.actions || []).slice(resumeIndex), run.orderContext || {});
+  const remaining = run.actions.slice(run.next);
   if (remaining.length === 0) return;
-  const script = buildReplayerScript(remaining, { runId: run.playbookRunId ?? tab.playbookRunId, stepDelayMs: 900 });
+  run.offset = run.next;
+  const script = buildReplayerScript(remaining, { runId: tab.playbookRunId, stepDelayMs: 900 });
   tab.view.webContents.executeJavaScript(script, true).catch(() => {});
 }
 
@@ -1083,18 +1114,26 @@ ipcMain.on('record:action', (event, action) => {
   if (recordedActions.length % 5 === 0) sendState();
 });
 
+// Statuses that mean "this step finished"; captcha/resumed reports use step -1 and don't move.
+const REPLAY_STEP_DONE = new Set(['click', 'input', 'change', 'submit', 'keydown', 'navigate', 'skip', 'skipped', 'wait']);
+
 ipcMain.on('replay:progress', (event, info) => {
   const run = replayRuns.get(info.runId);
   if (!run) return;
   run.log.push(info);
+  if (Number.isInteger(info.step) && info.step >= 0 && REPLAY_STEP_DONE.has(info.status)) {
+    run.next = Math.max(run.next, run.offset + info.step + 1);
+  }
   const tab = tabs.find((t) => t.id === run.tabId);
   const slot = tab?.slot ?? '?';
-  if (info.status === 'done' || info.status === 'cancelled') {
+  if (info.status === 'done' || info.status === 'cancelled' || info.status === 'miss' || info.status === 'error') {
     replayRuns.delete(info.runId);
     if (tab) tab.playbookRunId = null;
-    notify(`Playbook ${info.status === 'done' ? 'completed' : 'stopped'} on tab ${slot}.`);
-  } else if (info.status === 'miss' || info.status === 'error') {
-    notify(`Playbook step ${info.step}: ${info.status} — ${info.detail || ''}`);
+    if (info.status === 'done' || info.status === 'cancelled') {
+      notify(`Playbook ${info.status === 'done' ? 'completed' : 'stopped'} on tab ${slot}.`);
+    } else {
+      notify(`Playbook stopped at step ${run.offset + info.step + 1} on tab ${slot}: ${info.detail || info.status}`);
+    }
   } else if (info.status === 'captcha') {
     // Captcha / human-verification detected mid-flow — the operator needs to see this now.
     notify(`Captcha on tab ${slot} — playbook paused. Solve it and press ▶.`);
@@ -1146,7 +1185,9 @@ async function promptWatchPattern(tab) {
 function maybeInjectSeatMatcher(tab, url) {
   const payload = tabOrderPayload.get(tab);
   if (!payload || !url) return;
-  if (!/^https:\/\/(www\.)?ticketmaster\.(com|ca|co\.[a-z.]+|[a-z.]+)\/(event|resale|exchange|t)\//i.test(url)) return;
+  // Enumerated TLDs: the old `[a-z.]+` branch let `ticketmaster.evil.com` slip through and inject
+  // the live order record into an attacker's origin on a redirect chain.
+  if (!/^https:\/\/(www\.)?ticketmaster\.(com|ca|co\.uk|de|fr|es|it|nl|com\.au|co\.nz|com\.mx)\/(event|resale|exchange|t)\//i.test(url)) return;
   const script = buildSeatMatchScript(payload);
   tab.view.webContents.executeJavaScript(script, true).catch(() => {});
 }
@@ -1325,17 +1366,17 @@ function createView(tab) {
 //
 // A site sees the IP's location next to the browser's clock, and a US proxy with the computer's Korean
 // timezone doesn't add up. Pages get their clock from the computer they run on, so nothing inside the
-// browser is changed: at Launch, TabFleet looks up where the proxies' IPs are and sets the clock's
+// browser is changed: at Launch, TabSolo looks up where the proxies' IPs are and sets the clock's
 // timezone to theirs, before any tab opens.
 // - Windows: the computer's timezone is set with tzutil (allowed for normal users) and put back when
-//   TabFleet quits (or on its next start, after a crash).
-// - macOS / Linux: changing the computer's timezone needs an admin password, so TabFleet runs its own
+//   TabSolo quits (or on its next start, after a crash).
+// - macOS / Linux: changing the computer's timezone needs an admin password, so TabSolo runs its own
 //   processes in that timezone (TZ), which only takes effect from a process start: it restarts once and
 //   continues the launch, and starts in the same timezone next time.
 // Settings → "Set the clock to the proxies' timezone".
 
-const TZ_LOOKUPS = process.env.TABFLEET_TZ_LOOKUP_URL
-  ? [process.env.TABFLEET_TZ_LOOKUP_URL]
+const TZ_LOOKUPS = process.env.TABSOLO_TZ_LOOKUP_URL
+  ? [process.env.TABSOLO_TZ_LOOKUP_URL]
   : ['https://ipinfo.io/json', 'http://ip-api.com/json/?fields=status,timezone'];
 // Where a proxy's region is all that's known (the lookup failed).
 const REGION_ZONES = {
@@ -1403,7 +1444,7 @@ function proxyZone(proxy) {
   return proxyZones.get(key);
 }
 
-const CLOCK_LOG = process.env.TABFLEET_CLOCK_LOG; // tests: record the clock instead of changing it
+const CLOCK_LOG = process.env.TABSOLO_CLOCK_LOG; // tests: record the clock instead of changing it
 let clockZone = null; // the timezone pages see; null = the computer's own
 
 function runText(command, args) {
@@ -1446,7 +1487,7 @@ async function restoreWindowsClock() {
   }
 }
 
-/** Sets the clock to `zone` (null = the computer's own). Returns true when TabFleet must restart for it. */
+/** Sets the clock to `zone` (null = the computer's own). Returns true when TabSolo must restart for it. */
 async function applyClock(zone) {
   if (CLOCK_LOG) {
     fs.appendFileSync(CLOCK_LOG, `${zone ?? ''}\n`);
@@ -1461,7 +1502,7 @@ async function applyClock(zone) {
     }
     const target = windowsZoneFor(zone);
     if (!target) {
-      notify(`Your proxies are in ${zone}, which TabFleet can't set on Windows; the clock stays as it is.`);
+      notify(`Your proxies are in ${zone}, which TabSolo can't set on Windows; the clock stays as it is.`);
       return false;
     }
     const current = await runText('tzutil', ['/g']);
@@ -1474,7 +1515,7 @@ async function applyClock(zone) {
         notify(`Windows didn't allow changing the timezone to ${zone}; the clock stays as it is.`);
         return false;
       }
-      notify(`Clock set to ${zone}, where your proxies are. Windows gets its own timezone back when TabFleet quits.`);
+      notify(`Clock set to ${zone}, where your proxies are. Windows gets its own timezone back when TabSolo quits.`);
     }
     clockZone = zone;
     return false;
@@ -1487,14 +1528,14 @@ async function applyClock(zone) {
 }
 
 /**
- * Starts TabFleet again with its clock in `zone` (macOS / Linux). Run from `npm start`, the start script
+ * Starts TabSolo again with its clock in `zone` (macOS / Linux). Run from `npm start`, the start script
  * does it (exit code 75), so the app stays attached to the terminal.
  */
 function restartWithClock(zone) {
   if (zone) process.env.TZ = zone;
   else delete process.env.TZ;
-  if (process.env.TABFLEET_RESTART_FILE) {
-    fs.writeFileSync(process.env.TABFLEET_RESTART_FILE, JSON.stringify({ tz: zone ?? '' }));
+  if (process.env.TABSOLO_RESTART_FILE) {
+    fs.writeFileSync(process.env.TABSOLO_RESTART_FILE, JSON.stringify({ tz: zone ?? '' }));
     app.exit(75);
     return;
   }
@@ -1502,7 +1543,7 @@ function restartWithClock(zone) {
   app.exit(0);
 }
 
-/** Restarts TabFleet in the session's timezone and continues the launch there. */
+/** Restarts TabSolo in the session's timezone and continues the launch there. */
 function relaunchForClock() {
   settings.pendingLaunch = true;
   persistSettings();
@@ -1522,7 +1563,7 @@ function clockSettingChanged() {
   }
   settings.clockZone = null;
   persistSettings();
-  if (clockZone) notify('The clock goes back to this computer\'s timezone the next time TabFleet starts.');
+  if (clockZone) notify('The clock goes back to this computer\'s timezone the next time TabSolo starts.');
 }
 
 /** Looks up where the tab's proxy is, for the panel (it doesn't change the tab). */
@@ -1822,7 +1863,7 @@ function setProfile(tab, profileId, { force = false, url = null } = {}) {
   // Groups never mix: only the active group's accounts go on tabs.
   if (profile && !force && !inActiveGroup(profile)) {
     notify(hasActiveGroup()
-      ? `${profile.profile} is in ${groupName(groupKeyOf(profile))}; this session works in ${groupName(settings.activeGroup)}. Restart TabFleet to use another group.`
+      ? `${profile.profile} is in ${groupName(groupKeyOf(profile))}; this session works in ${groupName(settings.activeGroup)}. Restart TabSolo to use another group.`
       : 'Choose the group you are working in first (the group button in the toolbar).');
     return;
   }
@@ -1902,8 +1943,10 @@ async function removeOrphanPartitions() {
   } catch {
     return;
   }
+  // Strict UUID shape so a manual backup like `profile-backup-oct30` isn't deleted by accident.
+  const generated = /^profile-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[0-9a-f]+)?$/i;
   await Promise.all(entries
-    .filter((name) => name.startsWith('profile-') && !known.has(name))
+    .filter((name) => generated.test(name) && !known.has(name))
     .map((name) => fs.promises.rm(path.join(dir, name), { recursive: true, force: true }).catch(() => {})));
 }
 
@@ -1934,6 +1977,9 @@ async function clearThisTab(tab) {
   const contents = tab.view?.webContents;
   if (!contents || contents.isDestroyed()) return;
   const home = findProfile(tab.profileId)?.url || config.startURL || 'about:blank';
+  // Drop any live order attached to this tab — otherwise the next TM page re-fires the seat-match
+  // overlay for an order the user just reset.
+  tabOrderPayload.delete(tab);
   stopTab(tab);
   try { await wipeSession(contents.session); } catch {}
   if (perTabProxies()) {
@@ -2089,7 +2135,17 @@ function pickStringFromJSON(data, keys) {
 async function fetchSyncValue(url, authHeader, mode) {
   if (!url) return { value: '' };
   let host = '';
-  try { host = new URL(url).host; } catch {}
+  let protocol = '';
+  try {
+    const parsed = new URL(url);
+    host = parsed.host;
+    protocol = parsed.protocol;
+  } catch {}
+  // Scheme allowlist: a hostile sheet row with `file:///…/Login Data` would otherwise be read
+  // into the current tab's password field (and the OTP clipboard) via net.fetch.
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    return { value: '', error: 'Password/OTP URL must use http(s).' };
+  }
   try {
     const headers = { Accept: 'application/json, text/plain, */*' };
     if (authHeader) headers.Authorization = authHeader;
@@ -2171,7 +2227,7 @@ async function diagnoseSync(tab) {
 // Secrets copied from a profile (card number, CVV, expiry, password, proxy password) never go to
 // the system clipboard as plaintext. They're AES-256-GCM encrypted with a per-launch session key
 // and written as `TF~<base64>`. A paste listener in the stealth preload asks main to decrypt the
-// token before inserting it, so pasting into a TabFleet tab shows the real value and pasting into
+// token before inserting it, so pasting into a TabSolo tab shows the real value and pasting into
 // any other app (another browser, Notes, Terminal, iMessage) shows unreadable gibberish.
 
 const CLIP_PREFIX = 'TF~';
@@ -2477,6 +2533,11 @@ async function autoLogin(tab, cardIndex = 0) {
 async function pollForOTP(tab, cardIndex) {
   const started = Date.now();
   while (Date.now() - started < 30000) {
+    // Bail if the tab is gone — in a bulk auto-login the user often closes some tabs mid-flow;
+    // the loop used to keep running executeJavaScript against a destroyed webContents.
+    if (!tabs.includes(tab) || tab.view?.webContents?.isDestroyed?.()) {
+      return { otpFilled: 0, error: 'Tab closed before OTP arrived.' };
+    }
     const otpFill = await autofill(tab, cardIndex);
     if (otpFill.filled > 0) {
       await sleep(300);
@@ -2656,7 +2717,7 @@ function createGroup({ tabIds = [], name = 'Group', color = null } = {}) {
   return g;
 }
 
-function renameGroup(id, name) {
+function renameTabGroup(id, name) {
   const g = findGroup(id);
   if (!g) return;
   g.name = String(name || '').slice(0, 40);
@@ -2713,21 +2774,13 @@ async function closeGroup(id) {
   sendState();
 }
 
-/**
- * Reorders the strip by moving one tab to a new index. The target index is interpreted BEFORE the
- * tab is pulled out, so passing the current index is a no-op and passing length puts it at the end.
- * sendState() refreshes the renderer; the actual WebContentsView stacking is unchanged (only the
- * selected tab is on top), so no view manipulation is needed.
- */
 function moveTab(id, toIndex) {
   const from = tabs.findIndex((t) => t.id === id);
   if (from === -1) return;
   const clamped = Math.max(0, Math.min(tabs.length - 1, Number(toIndex) | 0));
   if (clamped === from) return;
   const [tab] = tabs.splice(from, 1);
-  // After the splice the array is shorter; if we were moving forward, the target index shifts down.
-  const target = clamped > from ? clamped : clamped;
-  tabs.splice(Math.min(target, tabs.length), 0, tab);
+  tabs.splice(Math.min(clamped, tabs.length), 0, tab);
   sendState();
 }
 
@@ -2805,7 +2858,7 @@ async function exportTabsCSV() {
   if (!win) return;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    defaultPath: path.join(app.getPath('documents'), `TabFleet session ${stamp}.csv`),
+    defaultPath: path.join(app.getPath('documents'), `TabSolo session ${stamp}.csv`),
     filters: [{ name: 'CSV', extensions: ['csv'] }],
   });
   if (canceled || !filePath) return;
@@ -3080,7 +3133,7 @@ const commands = {
   pinTab: (tab) => togglePinTab(tab),
   // Tab groups — most take a group id (not a tab) in `arg`.
   createGroup: (_tab, arg) => createGroup(arg ?? {}),
-  renameGroup: (_tab, arg) => renameGroup(arg?.id, arg?.name),
+  renameGroup: (_tab, arg) => renameTabGroup(arg?.id, arg?.name),
   setGroupColor: (_tab, arg) => setGroupColor(arg?.id, arg?.color),
   toggleGroupCollapse: (_tab, id) => toggleGroupCollapse(id),
   ungroupTab: (tab) => ungroupTab(tab.id),
@@ -3145,7 +3198,7 @@ ipcMain.handle('launch', async (_event, raw) => {
   const next = normalizeConfig(settingsForm);
   const error = validateConfig(next);
   if (error) return error;
-  // With several groups the user picks one for this session; it can't change until TabFleet restarts.
+  // With several groups the user picks one for this session; it can't change until TabSolo restarts.
   const groups = groupList();
   if (groups.length > 1) {
     const key = typeof raw?.group === 'string' ? raw.group : null;
@@ -3189,13 +3242,7 @@ async function scanProxyPool() {
   // lines, so rebuild by filtering the parsed proxies and reserializing — the user's comments on
   // the saved text are lost, but the surviving endpoints are preserved exactly.
   const survivingProxies = parseProxyList(config.proxyList).filter((p) => !flaggedKeys.has(proxyKey(p)));
-  const serialize = (p) => {
-    const auth = p.username ? `${p.username}:${p.password ?? ''}@` : '';
-    const scheme = p.kind === 'socks5' ? 'socks5://' : '';
-    const region = p.region ? ` ${p.region}` : '';
-    return `${scheme}${auth}${p.host}:${p.port}${region}`.trim();
-  };
-  config.proxyList = survivingProxies.map(serialize).join('\n');
+  config.proxyList = survivingProxies.map(serializeProxyLine).join('\n');
   writeData('config.json', config);
 
   // Rebuild the running pool from the cleaned list so New IP / assignment stops handing out dead proxies.
@@ -3228,16 +3275,10 @@ async function scanProxyPoolText(text) {
   });
   const flaggedKeys = new Set(results.filter((r) => r.flagged).map((r) => proxyKey(r.proxy)));
   const survivors = proxies.filter((p) => !flaggedKeys.has(proxyKey(p)));
-  const serialize = (p) => {
-    const auth = p.username ? `${p.username}:${p.password ?? ''}@` : '';
-    const scheme = p.kind === 'socks5' ? 'socks5://' : '';
-    const region = p.region ? ` ${p.region}` : '';
-    return `${scheme}${auth}${p.host}:${p.port}${region}`.trim();
-  };
   return {
     total: proxies.length,
     removed: flaggedKeys.size,
-    cleanedText: survivors.map(serialize).join('\n'),
+    cleanedText: survivors.map(serializeProxyLine).join('\n'),
     results,
   };
 }
@@ -3291,8 +3332,12 @@ async function openSeatMatchTestFlow(payload) {
   return { ok: true, tabId: tab.id };
 }
 
-ipcMain.handle('seats:test', (_event, payload) => testSeatMatchOnSelectedTab(payload ?? {}));
-ipcMain.handle('seats:test-flow', (_event, payload) => openSeatMatchTestFlow(payload ?? {}));
+// Dev-only: the menu entries that trigger these are gated on `!app.isPackaged`, so the IPC
+// handlers must be too — otherwise a compromised renderer could invoke them in shipped builds.
+if (!app.isPackaged) {
+  ipcMain.handle('seats:test', (_event, payload) => testSeatMatchOnSelectedTab(payload ?? {}));
+  ipcMain.handle('seats:test-flow', (_event, payload) => openSeatMatchTestFlow(payload ?? {}));
+}
 ipcMain.handle('recorder:start', () => { startRecording(); return { ok: true }; });
 ipcMain.handle('recorder:stop', (_event, options) => stopRecording(options ?? {}));
 ipcMain.handle('recorder:status', () => ({ active: recordingActive, count: recordedActions.length }));
@@ -3301,17 +3346,24 @@ ipcMain.handle('recorder:status', () => ({ active: recordingActive, count: recor
 // Re-save the most recent raw recording as a named playbook. The record-stop path writes a
 // recording-<timestamp>.json file first (unconditionally so nothing is ever lost); this handler
 // picks the newest such file, re-tags variables against the live order, and saves as a playbook.
-ipcMain.handle('playbooks:save-from-last-recording', (_event, { name, orderContext } = {}) => {
+ipcMain.handle('playbooks:save-from-last-recording', (_event, { name, orderContext, actions: edited } = {}) => {
   if (!name) return { error: 'Give the playbook a name.' };
   try {
     const dir = app.getPath('userData');
-    const files = fs.readdirSync(dir)
-      .filter((f) => /^recording-\d+\.json$/.test(f))
-      .map((f) => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
-      .sort((a, b) => b.mtime - a.mtime);
-    if (files.length === 0) return { error: 'No recent recording found.' };
-    const raw = JSON.parse(fs.readFileSync(path.join(dir, files[0].f), 'utf8'));
-    const actions = playbooksStore.autoBindVariables(raw.actions || [], { order: orderContext || null });
+    // Prefer the renderer-edited actions when it supplies them (review flow). Fall back to the
+    // backup file so callers that only have the name (e.g. after a restart) still work.
+    let actions;
+    if (Array.isArray(edited)) {
+      actions = edited;
+    } else {
+      const files = fs.readdirSync(dir)
+        .filter((f) => /^recording-\d+\.json$/.test(f))
+        .map((f) => ({ f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
+      if (files.length === 0) return { error: 'No recent recording found.' };
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, files[0].f), 'utf8'));
+      actions = playbooksStore.autoBindVariables(raw.actions || [], { order: orderContext || null });
+    }
     const hostPatterns = Array.from(new Set((actions || []).map((a) => {
       try { return new URL(a.url || '').hostname; } catch { return null; }
     }).filter(Boolean))).slice(0, 5);
@@ -3351,7 +3403,7 @@ ipcMain.handle('profiles:export-file', async () => {
   if (profiles.length === 0) return { error: 'No profiles to export yet.' };
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
     title: 'Export profiles',
-    defaultPath: `tabfleet-profiles-${new Date().toISOString().slice(0, 10)}.csv`,
+    defaultPath: `tabsolo-profiles-${new Date().toISOString().slice(0, 10)}.csv`,
     filters: [{ name: 'CSV', extensions: ['csv'] }],
   });
   if (canceled || !filePath) return { canceled: true };
@@ -3624,7 +3676,7 @@ function updateMenu() {
           // The click handler sends an IPC the renderer catches; the renderer then iterates its
           // multi-select set (or just the selected tab) and runs the same bulk action as the
           // in-renderer keyboard listener. Having both lets the shortcut work no matter whether the
-          // TabFleet UI or a tab's page has focus.
+          // TabSolo UI or a tab's page has focus.
           label: 'Auto-Login on Selected Tabs',
           accelerator: A.bulkAutoLogin,
           enabled: inBrowser,
@@ -3679,7 +3731,7 @@ function createWindow() {
     height: 900,
     minWidth: 760,
     minHeight: 480,
-    title: 'TabFleet',
+    title: 'TabSolo',
     backgroundColor: '#0a0a0b',
     frame: true,                  // explicit so Windows draws its standard min / max / close controls
     autoHideMenuBar: false,       // keep the menu bar visible on Windows so File / Window menus are reachable
@@ -3699,7 +3751,7 @@ function createWindow() {
   // The chrome UI is local and never navigates or opens windows.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
-  // Right-click context menu for the TabFleet UI itself (address bar, notes, profile forms,
+  // Right-click context menu for the TabSolo UI itself (address bar, notes, profile forms,
   // settings fields). Without this, right-click on an input in the chrome does nothing. Mirrors
   // what we already give page content: Cut / Copy / Paste / Select All, with edit-flag gating.
   win.webContents.on('context-menu', (_event, params) => {
@@ -3728,13 +3780,13 @@ function createWindow() {
 // A valid license is required before the main window opens. If none is cached, a login window
 // takes the user through activation; cached tokens let the app launch offline for up to 7 days.
 // Telemetry is a thin event stream — fire-and-forget, batched to disk, flushed to the API every
-// 60s. Set TABFLEET_API_BASE in the env or settings.apiBase to override the server URL.
+// 60s. Set TABSOLO_API_BASE in the env or settings.apiBase to override the server URL.
 
 let licenseClient = null;
 let telemetryClient = null;
 
 function getLicenseApiBase() {
-  return process.env.TABFLEET_API_BASE || settings?.apiBase || 'https://tabfleet-api.example.workers.dev';
+  return process.env.TABSOLO_API_BASE || settings?.apiBase || 'https://tabsolo-api.abdulsamad-laghari1.workers.dev';
 }
 
 function initLicenseAndTelemetry() {
@@ -3748,6 +3800,7 @@ function initLicenseAndTelemetry() {
     appVersion,
     deviceId: licenseClient.deviceId,
     getLicenseKey: () => licenseClient.currentLicenseKey(),
+    getToken: () => licenseClient.currentToken(),
     enabled: settings?.telemetryEnabled !== false,
   });
   telemetryClient.start();
@@ -3762,7 +3815,7 @@ function showLoginWindow({ reason = 'no_license' } = {}) {
   return new Promise((resolve) => {
     const loginWin = new BrowserWindow({
       width: 500, height: 640, resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
-      title: 'TabFleet — Activate',
+      title: 'TabSolo — Activate',
       backgroundColor: '#0a0b0f',
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
       webPreferences: {
@@ -3819,8 +3872,12 @@ app.whenReady().then(async () => {
   initLicenseAndTelemetry();
 
   // License gate — if no valid license, show the login window first and loop until the user
-  // either activates successfully or quits the window.
-  let licenseResult = await licenseClient.validateAtStartup();
+  // either activates successfully or quits the window. The e2e tests set TABSOLO_SKIP_LICENSE=1
+  // to bypass this (dev-only; packaged builds ignore the var).
+  const skipLicense = !app.isPackaged && process.env.TABSOLO_SKIP_LICENSE === '1';
+  let licenseResult = skipLicense
+    ? { ok: true, plan: 'dev', source: 'skip' }
+    : await licenseClient.validateAtStartup();
   while (!licenseResult.ok) {
     const activated = await showLoginWindow({ reason: licenseResult.reason });
     if (!activated) { app.quit(); return; }
@@ -3833,7 +3890,7 @@ app.whenReady().then(async () => {
     const r = await licenseClient.validateAtStartup();
     if (!r.ok) {
       telemetryClient?.trackEvent('license.lost', { reason: r.reason });
-      dialog.showMessageBox({ type: 'error', message: 'TabFleet license is no longer valid', detail: `Reason: ${r.reason}. The app will close.` });
+      dialog.showMessageBox({ type: 'error', message: 'TabSolo license is no longer valid', detail: `Reason: ${r.reason}. The app will close.` });
       app.quit();
     }
   }, 6 * 60 * 60 * 1000).unref?.();
@@ -3845,12 +3902,13 @@ app.whenReady().then(async () => {
     return;
   }
   if (process.platform !== 'win32') clockZone = settings.matchProxyTimezone && process.env.TZ ? process.env.TZ : null;
-  // Windows: a timezone left set by a TabFleet that didn't quit normally goes back first.
+  // Windows: a timezone left set by a TabSolo that didn't quit normally goes back first.
   await restoreWindowsClock();
   await Promise.all([loadProfiles(), loadSyncCredentials()]);
   // Only with the accounts loaded: an unreadable profiles file must never look like "no accounts".
   if (profiles.length > 0) await removeOrphanPartitions();
   createWindow();
+  startupDone = true;
   startAutoUpdater();
   ensureActiveGroup();
   if (settings.autoOpenOrders) startOrderWatcher();
@@ -3890,6 +3948,10 @@ let updateStatus = { kind: 'idle' };
 let lastChecked = null;
 let manualCheck = false;
 let notifiedVersion = null;
+// macOS refuses to install an update into an unsigned app, and the Windows portable .exe can't
+// replace itself, so those builds never download in the background: they open the download page.
+const CAN_SELF_INSTALL = process.platform === 'win32' && !process.env.PORTABLE_EXECUTABLE_DIR;
+const RELEASES_URL = 'https://github.com/abdulsamad2/tabsolo/releases/latest';
 
 function loadSettings() {
   try {
@@ -3919,7 +3981,7 @@ function saveSettings(input) {
     else stopOrderWatcher();
   }
   if (autoUpdater) {
-    autoUpdater.autoDownload = settings.autoDownload;
+    autoUpdater.autoDownload = CAN_SELF_INSTALL && settings.autoDownload;
     // Turning auto-download on while an update is waiting: fetch it now.
     if (settings.autoDownload && updateStatus.kind === 'available') autoUpdater.downloadUpdate().catch(() => {});
   }
@@ -3940,23 +4002,39 @@ function setUpdateStatus(status) {
   if (['up-to-date', 'error', 'available', 'downloaded'].includes(status.kind)) lastChecked = Date.now();
   if (['up-to-date', 'error', 'downloaded'].includes(status.kind)) manualCheck = false;
   win?.webContents.send('update-status', updateInfo());
-  const ready = status.kind === 'downloaded' || (status.kind === 'available' && !settings.autoDownload);
-  if (ready && settings.notifyUpdates && Notification.isSupported() && notifiedVersion !== `${status.kind}:${status.version}`) {
-    notifiedVersion = `${status.kind}:${status.version}`;
-    const notice = new Notification({
-      title: status.kind === 'downloaded' ? `TabFleet ${status.version} is ready` : `TabFleet ${status.version} is available`,
-      body: status.kind === 'downloaded'
-        ? 'Restart TabFleet to install it. Your profiles and tabs are kept.'
-        : 'Open Settings to download it.',
-    });
-    notice.on('click', () => {
-      if (!win) return;
-      win.show();
-      win.focus();
-      win.webContents.send('open-settings');
-    });
-    notice.show();
+  const ready = CAN_SELF_INSTALL
+    ? status.kind === 'downloaded' || (status.kind === 'available' && !settings.autoDownload)
+    : status.kind === 'available';
+  const key = `${status.kind}:${status.version}`;
+  if (ready && settings.notifyUpdates && notifiedVersion !== key) {
+    notifiedVersion = key;
+    promptUpdate(status);
   }
+}
+
+/** Asks the user to act on an update: restart to install, download it, or open the download page. */
+async function promptUpdate(status) {
+  const downloaded = status.kind === 'downloaded';
+  const options = {
+    type: 'info',
+    title: 'TabSolo update',
+    message: downloaded ? `TabSolo ${status.version} is ready to install` : `TabSolo ${status.version} is available`,
+    detail: downloaded
+      ? 'Restart TabSolo to finish updating. Your profiles, tabs and settings are kept.'
+      : CAN_SELF_INSTALL
+        ? 'Download it now? You\'ll be asked to restart when it\'s ready.'
+        : process.platform === 'darwin'
+          ? 'Download the new version and drag it into Applications, replacing this one. Your profiles and settings are kept.'
+          : 'Download the new version and replace this TabSolo.exe. Your profiles and settings are kept.',
+    buttons: [downloaded ? 'Restart now' : CAN_SELF_INSTALL ? 'Download' : 'Open download page', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  };
+  const { response } = await (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
+  if (response !== 0) return;
+  if (downloaded) setImmediate(() => autoUpdater.quitAndInstall());
+  else if (CAN_SELF_INSTALL) autoUpdater.downloadUpdate().catch((error) => setUpdateStatus({ kind: 'error', message: shortError(error) }));
+  else shell.openExternal(RELEASES_URL);
 }
 
 async function checkForUpdates({ manual = false } = {}) {
@@ -3977,7 +4055,8 @@ function startAutoUpdater() {
   ipcMain.handle('update:get-info', () => updateInfo());
   ipcMain.handle('update:check-now', () => checkForUpdates({ manual: true }));
   ipcMain.handle('update:download', () => {
-    if (autoUpdater && updateStatus.kind === 'available') {
+    if (!CAN_SELF_INSTALL) shell.openExternal(RELEASES_URL);
+    else if (autoUpdater && updateStatus.kind === 'available') {
       autoUpdater.downloadUpdate().catch((error) => setUpdateStatus({ kind: 'error', message: shortError(error) }));
     }
     return updateInfo();
@@ -3997,11 +4076,11 @@ function startAutoUpdater() {
     return;
   }
   // Fully offline-friendly: an unreachable update server does not break the app.
-  autoUpdater.autoDownload = settings.autoDownload;
+  autoUpdater.autoDownload = CAN_SELF_INSTALL && settings.autoDownload;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('error', (error) => setUpdateStatus({ kind: 'error', message: shortError(error) }));
   autoUpdater.on('checking-for-update', () => setUpdateStatus({ kind: 'checking' }));
-  autoUpdater.on('update-available', (info) => setUpdateStatus({ kind: 'available', version: info.version, downloading: settings.autoDownload }));
+  autoUpdater.on('update-available', (info) => setUpdateStatus({ kind: 'available', version: info.version, downloading: autoUpdater.autoDownload }));
   autoUpdater.on('update-not-available', () => setUpdateStatus({ kind: 'up-to-date' }));
   autoUpdater.on('download-progress', (p) => setUpdateStatus({ kind: 'progress', version: updateStatus.version, percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (info) => setUpdateStatus({ kind: 'downloaded', version: info.version }));
@@ -4015,8 +4094,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+// macOS also fires activate at launch, while startup is still checking the license and loading
+// accounts. Opening a window then skipped the license gate, showed a start screen without the
+// accounts, raced the update:* handlers, and left a second window once startup finished.
+let startupDone = false;
 app.on('activate', () => {
-  if (!win) {
+  if (startupDone && !win) {
     mode = 'launcher';
     createWindow();
   }

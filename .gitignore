@@ -5,3 +5,4 @@ dist/
 .env.local
 server/.wrangler/
 server/.dev.vars
+server/.secrets.local

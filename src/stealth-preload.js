@@ -22,11 +22,11 @@ try {
   });
 } catch (_) {}
 
-// Encrypted-clipboard paste interceptor. Secrets copied in TabFleet land on the system clipboard as
+// Encrypted-clipboard paste interceptor. Secrets copied in TabSolo land on the system clipboard as
 // `TF~<base64>` tokens; this handler sniffs paste events, swaps the token for the real plaintext
 // via a sync IPC round-trip to main, and lets Chromium insert the plaintext into the focused field.
 // If decryption fails (different launch, no matching key) the token is cleared, so other apps that
-// read the clipboard never see TabFleet's secrets.
+// read the clipboard never see TabSolo's secrets.
 const CLIP_PREFIX = 'TF~';
 try {
   document.addEventListener('paste', (event) => {
@@ -55,7 +55,10 @@ try {
 // Per-session seed is passed through webPreferences.additionalArguments (set in main.js) and lands in
 // process.argv as --fleet-seed=<hex>. Preloads in subframes see the same argv as the main frame.
 const seedArg = process.argv.find((a) => typeof a === 'string' && a.startsWith('--fleet-seed='));
-const seedHex = seedArg ? seedArg.slice('--fleet-seed='.length) : '1';
+const seedRaw = seedArg ? seedArg.slice('--fleet-seed='.length) : '1';
+// Format gate so a future refactor that pipes a non-hex source (profile name, env var) into the
+// seed can't turn this inline interpolation into webFrame.executeJavaScript string injection.
+const seedHex = /^[0-9a-f]{1,16}$/i.test(seedRaw) ? seedRaw : '1';
 
 webFrame.executeJavaScript(`
   (() => {
@@ -255,6 +258,10 @@ webFrame.executeJavaScript(`
     // tests that read raw pixels or hash pre-encode content see a different canvas per profile.
     // (2) toDataURL/toBlob also route through a scratch canvas with LSB flips as a backstop.
     try {
+      // Capture the native fillRect BEFORE wrapping it — otherwise stampSeed's own ctx.fillRect
+      // resolves to the wrapper, which calls stampSeed again, which calls fillRect again, …
+      // until Chrome throws stack-overflow on every canvas draw.
+      const nativeFillRect = CanvasRenderingContext2D.prototype.fillRect;
       const stampSeed = (ctx) => {
         try {
           const canvas = ctx && ctx.canvas;
@@ -268,7 +275,7 @@ webFrame.executeJavaScript(`
           const b = (SEED >>> 16) & 255;
           ctx.globalAlpha = 1;
           ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
-          ctx.fillRect(x, y, 1, 1);
+          nativeFillRect.call(ctx, x, y, 1, 1);
           ctx.fillStyle = savedFill;
           ctx.globalAlpha = savedAlpha;
         } catch (_) {}
@@ -419,7 +426,7 @@ webFrame.executeJavaScript(`
 
     // ----- navigator.userAgentData brands ----------------------------------------------------
     // Chromium builds .brands from the compiled product name, so without patching it, JavaScript
-    // reads [{brand:"TabFleet", version:"1.3.10"}, {brand:"Chromium", ...}, {brand:"Not=A?Brand", ...}]
+    // reads [{brand:"TabSolo", version:"1.3.10"}, {brand:"Chromium", ...}, {brand:"Not=A?Brand", ...}]
     // even though our Sec-CH-UA header is clean. Rewrite the brands list and getHighEntropyValues.
     try {
       const uaData = navigator.userAgentData;
@@ -473,7 +480,7 @@ webFrame.executeJavaScript(`
     } catch (_) {}
 
     // ----- Window dimensions ------------------------------------------------------------------
-    // TabFleet puts a sidebar beside the tab view, so a page sees window.innerWidth = 1080 and
+    // TabSolo puts a sidebar beside the tab view, so a page sees window.innerWidth = 1080 and
     // window.outerWidth = 1400. Stock Chrome has outer ≈ inner (the window chrome has no horizontal
     // bars); the 320-pixel gap is a tell. Reclamp outer dimensions to Chrome-like values: horizontal
     // identical to inner, vertical ~86px taller (tab bar + toolbar).

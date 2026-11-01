@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
-  <title>TabFleet</title>
+  <title>TabSolo</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,13 +11,13 @@
     <form id="launch-form" class="card" novalidate>
       <header>
         <button type="button" id="launcher-settings" class="icon settings-btn" title="Settings — updates, notifications, theme (Ctrl/⌘ ,)" aria-label="Settings">⚙</button>
-        <h1>TabFleet</h1>
-        <p class="muted">Open a fleet of tabs, each with its own session and IP.</p>
+        <h1>TabSolo <span class="beta-badge">Beta</span></h1>
+        <p class="muted">Every tab its own session and IP.</p>
       </header>
 
       <fieldset id="launch-group" hidden>
         <legend>Group of accounts</legend>
-        <p class="hint">Choose the group to work in. It stays the same until TabFleet restarts, so accounts from different groups never mix.</p>
+        <p class="hint">Choose the group to work in. It stays the same until TabSolo restarts, so accounts from different groups never mix.</p>
         <div id="launch-group-list" class="launch-groups" role="radiogroup" aria-label="Group of accounts"></div>
       </fieldset>
 
@@ -129,7 +129,7 @@
         <button id="proxy-toggle" data-cmd="toggleProxy" class="proxy-pill" title="Switch this tab between your local internet and a proxy"></button>
         <button data-cmd="burn" class="burn" title="Switch this tab to a new IP address (keeps you signed in)">New IP</button>
         <button id="clear-tab-btn" class="burn reset" title="Clear this tab's cookies, cache and saved logins, give it a new IP from the pool, and reload">🧹 Clear tab</button>
-        <button id="group-badge" class="group-badge" hidden title="The group of accounts for this session. It's locked until TabFleet restarts.">
+        <button id="group-badge" class="group-badge" hidden title="The group of accounts for this session. It's locked until TabSolo restarts.">
           <span class="group-dot" aria-hidden="true"></span><span class="group-badge-name"></span><span class="group-lock" aria-hidden="true">🔒</span>
         </button>
         <div id="fav-profiles" class="fav-profiles" title="Click a favorite profile to open a tab with it"></div>
@@ -387,6 +387,24 @@
     </div>
   </div>
 
+  <div id="recording-review-sheet" class="modal" role="dialog" aria-labelledby="recording-review-title" hidden>
+    <div class="shortcuts-card playbooks-card">
+      <header>
+        <h2 id="recording-review-title">Review recording</h2>
+        <button id="recording-review-close" class="icon" aria-label="Close">×</button>
+      </header>
+      <p class="shortcuts-hint">Uncheck steps you don't want. Click <strong>+ wait</strong> to add a pause between steps.</p>
+      <label class="playbook-name-row">Playbook name
+        <input id="recording-review-name" type="text" autocomplete="off" spellcheck="false">
+      </label>
+      <div id="recording-review-list" class="recording-review-list"></div>
+      <div class="recording-review-actions">
+        <button id="recording-review-cancel">Cancel</button>
+        <button id="recording-review-save" class="primary">Save playbook</button>
+      </div>
+    </div>
+  </div>
+
   <div id="palette" class="modal" role="dialog" aria-labelledby="palette-title" hidden>
     <div class="palette-card">
       <input id="palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="Jump to a tab — type title, host, or profile" aria-labelledby="palette-title">
@@ -406,7 +424,7 @@
         <h3>Updates</h3>
         <div class="update-row">
           <div class="update-summary">
-            <strong>TabFleet <span id="app-version"></span></strong>
+            <strong>TabSolo <span id="app-version"></span> <span class="beta-badge">Beta</span></strong>
             <span id="update-state" class="hint"></span>
             <progress id="update-progress" max="100" hidden></progress>
           </div>
@@ -417,13 +435,13 @@
           </div>
         </div>
         <label class="check"><input id="setting-notify" type="checkbox"><span>Notify me when an update is available<small class="hint">Shows a banner and a system notification.</small></span></label>
-        <label class="check"><input id="setting-autodownload" type="checkbox"><span>Download updates automatically<small class="hint">Installed the next time TabFleet restarts.</small></span></label>
+        <label class="check"><input id="setting-autodownload" type="checkbox"><span>Download updates automatically<small class="hint">Installed the next time TabSolo restarts.</small></span></label>
         <p id="update-checked" class="hint"></p>
       </section>
 
       <section class="settings-group">
         <h3>Browsing</h3>
-        <label class="check"><input id="setting-match-tz" type="checkbox"><span>Set the clock to the proxies' timezone<small class="hint">At Launch, looks up where your proxies' IPs are and sets the clock to their timezone, so sites see a time that agrees with the IP. Nothing inside the browser changes. On Windows the computer's timezone is changed while TabFleet runs and put back when it quits; on a Mac TabFleet restarts once in that timezone.</small></span></label>
+        <label class="check"><input id="setting-match-tz" type="checkbox"><span>Set the clock to the proxies' timezone<small class="hint">At Launch, looks up where your proxies' IPs are and sets the clock to their timezone, so sites see a time that agrees with the IP. Nothing inside the browser changes. On Windows the computer's timezone is changed while TabSolo runs and put back when it quits; on a Mac TabSolo restarts once in that timezone.</small></span></label>
         <label class="check"><input id="setting-auto-open-orders" type="checkbox"><span>Auto-open new invoiced orders<small class="hint">Polls Automatiq every two minutes. For each new invoiced order a tab opens on the Ticketmaster search for its event. When the tab reaches a Ticketmaster event page an overlay highlights the matching Section · Row · Seats from the order; press <kbd>⌘ Enter</kbd> (or <kbd>Ctrl Enter</kbd>) to click the match. Final purchase is still manual.</small></span></label>
       </section>
 
@@ -498,20 +516,20 @@
       </div>
 
       <div id="group-locked-note" class="group-locked" hidden>
-        <p>🔒 <strong class="locked-name"></strong> is locked for this session, so accounts from different groups never mix. To work in another group, restart TabFleet and choose it on the start screen.</p>
-        <button type="button" id="group-restart" class="danger-solid">Restart TabFleet…</button>
+        <p>🔒 <strong class="locked-name"></strong> is locked for this session, so accounts from different groups never mix. To work in another group, restart TabSolo and choose it on the start screen.</p>
+        <button type="button" id="group-restart" class="danger-solid">Restart TabSolo…</button>
       </div>
     </div>
   </div>
 
   <div id="seat-test-sheet" class="modal" role="dialog" aria-labelledby="seat-test-title" hidden>
-    <div class="shortcuts-card" style="max-width:480px">
+    <div class="shortcuts-card seat-test-card">
       <header>
         <h2 id="seat-test-title">Test order flow</h2>
         <button id="seat-test-close" class="icon" aria-label="Close">×</button>
       </header>
-      <div style="padding:16px 20px">
-        <p class="hint" style="margin-top:0">Dev-only harness. Simulates a full invoiced order: open the Ticketmaster search for the event, then on the event page the overlay highlights matching seats and (if the box is ticked) auto-clicks through to add-to-cart. <strong>Nothing is purchased.</strong></p>
+      <div class="seat-test-body">
+        <p class="hint seat-test-intro">Dev-only harness. Simulates a full invoiced order: open the Ticketmaster search for the event, then on the event page the overlay highlights matching seats and (if the box is ticked) auto-clicks through to add-to-cart. <strong>Nothing is purchased.</strong></p>
         <form id="seat-test-form">
           <label>Event name<input name="eventName" type="text" autocomplete="off" placeholder="e.g. Taylor Swift"></label>
           <div class="row">
@@ -526,9 +544,9 @@
             <label>Low seat<input name="lowSeat" type="number" min="1" placeholder="e.g. 1"></label>
             <label>High seat<input name="highSeat" type="number" min="1" placeholder="e.g. 2"></label>
           </div>
-          <label class="check" style="margin-top:8px"><input id="seat-test-autoclick" type="checkbox"><span>Auto-click the match and add-to-cart<small class="hint">For testing only. The overlay normally just highlights — turning this on clicks the first matched seat, then the first Add-to-Cart / Buy / Continue button it finds. Stops before payment.</small></span></label>
-          <p id="seat-test-status" class="hint" style="min-height:1.3em"></p>
-          <div class="row" style="justify-content:flex-end;gap:8px;margin-top:4px">
+          <label class="check seat-test-check"><input id="seat-test-autoclick" type="checkbox"><span>Auto-click the match and add-to-cart<small class="hint">For testing only. The overlay normally just highlights — turning this on clicks the first matched seat, then the first Add-to-Cart / Buy / Continue button it finds. Stops before payment.</small></span></label>
+          <p id="seat-test-status" class="hint"></p>
+          <div class="row seat-test-actions">
             <button type="button" id="seat-test-cancel">Cancel</button>
             <button type="button" id="seat-test-inject">Inject into current tab</button>
             <button type="submit" class="primary">Open full flow in new tab</button>

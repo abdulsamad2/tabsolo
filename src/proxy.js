@@ -285,6 +285,14 @@ function proxyRule(proxy) {
   return `${proxy.kind === 'socks5' ? 'socks5' : 'http'}://${host}:${proxy.port}`;
 }
 
+/** Reserializes a parsed proxy into the one-line text form the user can paste back. */
+function serializeProxyLine(proxy) {
+  const auth = proxy.username ? `${proxy.username}:${proxy.password ?? ''}@` : '';
+  const scheme = proxy.kind === 'socks5' ? 'socks5://' : '';
+  const region = proxy.region ? ` ${proxy.region}` : '';
+  return `${scheme}${auth}${proxy.host}:${proxy.port}${region}`.trim();
+}
+
 /** Display text; never includes the password. */
 function proxyLabel(proxy) {
   if (!proxy) return null;
@@ -317,5 +325,6 @@ module.exports = {
   proxyRule,
   proxyLabel,
   proxyKey,
+  serializeProxyLine,
   toURL,
 };
