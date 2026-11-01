@@ -270,14 +270,25 @@ h1, h2, h3, h4 { letter-spacing: -0.02em; }
 
 /* ============ USE CASES ============ */
 .cases {
-  display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
 }
 .cases article {
   background: var(--bg-elev); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 32px;
+  border-radius: var(--radius); padding: 24px 26px;
+  transition: border-color .2s, transform .2s;
 }
-.cases h3 { font-size: 20px; margin: 0 0 10px; color: var(--text); }
-.cases p { margin: 0; color: var(--text-mute); font-size: 15px; line-height: 1.65; }
+.cases article:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+.case-tag {
+  display: inline-block; padding: 3px 10px; border-radius: 100px;
+  background: rgba(90,124,255,0.12); color: var(--accent-2);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; margin-bottom: 12px;
+}
+.cases h3 { font-size: 17px; margin: 0 0 8px; color: var(--text); }
+.cases p { margin: 0; color: var(--text-mute); font-size: 14px; line-height: 1.6; }
+@media (max-width: 900px) {
+  .cases { grid-template-columns: 1fr; }
+}
 
 /* ============ SHORTCUT GRID ============ */
 .shortcut-grid {
