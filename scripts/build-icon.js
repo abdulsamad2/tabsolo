@@ -34,7 +34,8 @@ function makePixels(SIZE) {
       const dy = y < radius ? radius - y : y > SIZE - radius - 1 ? y - (SIZE - radius - 1) : 0;
       if (dx > 0 && dy > 0) {
         const d = Math.sqrt(dx * dx + dy * dy);
-        a = d > radius ? 0 : Math.round(255 * (1 - (d / radius) ** 3));
+        // Solid up to the curve, with one pixel of edge softening.
+        a = Math.round(255 * Math.min(1, Math.max(0, radius - d + 0.5)));
       }
       // Diagonal highlight: brighter near the top-left, fading to the bottom-right.
       const t = (x + y) / (SIZE * 2);
