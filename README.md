@@ -55,7 +55,7 @@ Download the latest build from [Releases](https://github.com/abdulsamad2/tabsolo
 - **Windows:** `TabSolo-Setup-<version>.exe` (installer) or `TabSolo-<version>.exe` (portable). If
   SmartScreen warns, choose *More info → Run anyway*.
 - **macOS:** `TabSolo-<version>-arm64.dmg` (Apple silicon) or `TabSolo-<version>.dmg` (Intel). The
-  build isn't notarised yet: the first time, right-click TabSolo in Applications and choose *Open*.
+  build isn't notarised yet: the first time, open TabSolo, close the warning, then go to System Settings → Privacy & Security and click *Open Anyway*.
 
 The Windows version updates itself (on launch and every two hours, installed on restart). On macOS,
 download new versions from Releases until the build is signed.
