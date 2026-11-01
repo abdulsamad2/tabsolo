@@ -33,6 +33,8 @@ const { buildSeatMatchScript } = require('./seat-match-script');
 const { buildRecorderScript } = require('./recorder-script');
 const { buildReplayerScript } = require('./replayer-script');
 const playbooksStore = require('./playbooks');
+const { createLicenseClient } = require('./license/license');
+const { createTelemetryClient } = require('./license/telemetry');
 const { withoutSecrets, mergeImported, decodeTextFile, parseProfilesCSV, buildProfile, publicProfile, planAssignments, buildAutofillScript, buildSubmitScript, buildCardDigitsScript, chooseShownCard, profilesToCSV } = require('./profiles');
 const { resolveForTab } = require('./resolvers');
 const { parseSheetURL, csvExportURL, viewURL, isSheetsURL, sheetListURL, parseSheetList } = require('./sheets');
@@ -1085,13 +1087,19 @@ ipcMain.on('replay:progress', (event, info) => {
   const run = replayRuns.get(info.runId);
   if (!run) return;
   run.log.push(info);
+  const tab = tabs.find((t) => t.id === run.tabId);
+  const slot = tab?.slot ?? '?';
   if (info.status === 'done' || info.status === 'cancelled') {
     replayRuns.delete(info.runId);
-    const tab = tabs.find((t) => t.id === run.tabId);
     if (tab) tab.playbookRunId = null;
-    notify(`Playbook ${info.status === 'done' ? 'completed' : 'stopped'} on tab ${tab?.slot ?? '?'}.`);
+    notify(`Playbook ${info.status === 'done' ? 'completed' : 'stopped'} on tab ${slot}.`);
   } else if (info.status === 'miss' || info.status === 'error') {
     notify(`Playbook step ${info.step}: ${info.status} — ${info.detail || ''}`);
+  } else if (info.status === 'captcha') {
+    // Captcha / human-verification detected mid-flow — the operator needs to see this now.
+    notify(`Captcha on tab ${slot} — playbook paused. Solve it and press ▶.`);
+  } else if (info.status === 'resumed') {
+    notify(`Playbook resumed on tab ${slot}.`);
   }
   // Forward to the renderer for a running progress UI.
   win?.webContents.send('playbook-progress', info);
@@ -3716,8 +3724,120 @@ function createWindow() {
   updateMenu();
 }
 
+// ─────────────────────────────────────────────── Licensing + telemetry
+// A valid license is required before the main window opens. If none is cached, a login window
+// takes the user through activation; cached tokens let the app launch offline for up to 7 days.
+// Telemetry is a thin event stream — fire-and-forget, batched to disk, flushed to the API every
+// 60s. Set TABFLEET_API_BASE in the env or settings.apiBase to override the server URL.
+
+let licenseClient = null;
+let telemetryClient = null;
+
+function getLicenseApiBase() {
+  return process.env.TABFLEET_API_BASE || settings?.apiBase || 'https://tabfleet-api.example.workers.dev';
+}
+
+function initLicenseAndTelemetry() {
+  if (licenseClient && telemetryClient) return;
+  const dataDir = app.getPath('userData');
+  const appVersion = app.getVersion();
+  licenseClient = createLicenseClient({ apiBase: getLicenseApiBase(), dataDir, appVersion });
+  telemetryClient = createTelemetryClient({
+    apiBase: getLicenseApiBase(),
+    dataDir,
+    appVersion,
+    deviceId: licenseClient.deviceId,
+    getLicenseKey: () => licenseClient.currentLicenseKey(),
+    enabled: settings?.telemetryEnabled !== false,
+  });
+  telemetryClient.start();
+
+  // Pipe uncaught errors into the telemetry queue.
+  process.on('uncaughtException', (err) => telemetryClient?.trackError(err, { kind: 'crash' }));
+  process.on('unhandledRejection', (reason) => telemetryClient?.trackError(reason, { kind: 'crash' }));
+}
+
+// Shows the login window and resolves once the user successfully activates (or `null` on quit).
+function showLoginWindow({ reason = 'no_license' } = {}) {
+  return new Promise((resolve) => {
+    const loginWin = new BrowserWindow({
+      width: 500, height: 640, resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
+      title: 'TabFleet — Activate',
+      backgroundColor: '#0a0b0f',
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+      webPreferences: {
+        preload: path.join(__dirname, 'license', 'login-preload.js'),
+        contextIsolation: true, sandbox: false, nodeIntegration: false,
+      },
+    });
+    loginWin.setMenuBarVisibility(false);
+    loginWin.loadFile(path.join(__dirname, 'license', 'login.html'));
+    if (reason && reason !== 'no_license') {
+      loginWin.webContents.once('did-finish-load', () => {
+        const msg = reason === 'revoked' ? 'This license was revoked. Please activate a different key.'
+                  : reason === 'device_revoked' ? 'This device was removed from the license. Re-activate to continue.'
+                  : reason === 'expired' ? 'This license has expired. Activate a renewed key.'
+                  : reason === 'expired_offline' ? 'Offline grace period expired. Reconnect to re-validate.'
+                  : null;
+        if (msg) loginWin.webContents.executeJavaScript(
+          `(() => { const s = document.getElementById('status'); if (s) { s.className = 'status err'; s.textContent = ${JSON.stringify(msg)}; } })()`,
+        ).catch(() => {});
+      });
+    }
+    ipcMain.once('license:proceed', () => { try { loginWin.close(); } catch {} resolve(true); });
+    loginWin.on('closed', () => resolve(false));
+  });
+}
+
+ipcMain.handle('license:device-info', () => ({
+  deviceId: licenseClient?.deviceId || 'unknown',
+  deviceLabel: licenseClient?.deviceLabel || 'unknown device',
+}));
+
+ipcMain.handle('license:activate', async (_event, key) => {
+  if (!licenseClient) return { ok: false, error: 'not_ready' };
+  const result = await licenseClient.activate(key);
+  if (result.ok) telemetryClient?.trackEvent('license.activated', { plan: result.plan });
+  else telemetryClient?.trackEvent('license.activation_failed', { reason: result.error });
+  return result;
+});
+
+ipcMain.handle('license:info', () => ({
+  key: licenseClient?.currentLicenseKey() || null,
+  plan: licenseClient?.currentPlan() || null,
+  deviceId: licenseClient?.deviceId || null,
+}));
+
+ipcMain.handle('license:deactivate', () => {
+  licenseClient?.deactivate();
+  telemetryClient?.trackEvent('license.deactivated');
+  return { ok: true };
+});
+
 app.whenReady().then(async () => {
   loadSettings();
+  initLicenseAndTelemetry();
+
+  // License gate — if no valid license, show the login window first and loop until the user
+  // either activates successfully or quits the window.
+  let licenseResult = await licenseClient.validateAtStartup();
+  while (!licenseResult.ok) {
+    const activated = await showLoginWindow({ reason: licenseResult.reason });
+    if (!activated) { app.quit(); return; }
+    licenseResult = await licenseClient.validateAtStartup();
+  }
+  telemetryClient?.trackEvent('app.launch', { plan: licenseResult.plan, source: licenseResult.source });
+
+  // Re-validate every 6 hours so revocations propagate without a restart.
+  setInterval(async () => {
+    const r = await licenseClient.validateAtStartup();
+    if (!r.ok) {
+      telemetryClient?.trackEvent('license.lost', { reason: r.reason });
+      dialog.showMessageBox({ type: 'error', message: 'TabFleet license is no longer valid', detail: `Reason: ${r.reason}. The app will close.` });
+      app.quit();
+    }
+  }, 6 * 60 * 60 * 1000).unref?.();
+
   // macOS / Linux: start in the timezone of the last session's proxies (it only applies from a start).
   if (!CLOCK_LOG && process.platform !== 'win32' && !settings.pendingLaunch && settings.matchProxyTimezone
     && settings.clockZone && process.env.TZ !== settings.clockZone) {

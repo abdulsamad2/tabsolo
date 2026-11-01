@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>TabFleet — Activate</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0a0b0f; color: #eef1f6; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; }
+    body { display: grid; place-items: center; -webkit-app-region: drag; }
+    .card { -webkit-app-region: no-drag; background: #141821; border: 1px solid #22283a; border-radius: 14px; padding: 36px; width: 420px; box-shadow: 0 30px 70px rgba(0,0,0,.5); }
+    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+    .logo svg { flex-shrink: 0; }
+    h1 { margin: 0 0 6px; font-size: 20px; letter-spacing: -0.02em; }
+    p { margin: 0 0 18px; color: #a4acb8; font-size: 13.5px; }
+    label { display: block; color: #7f9bff; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; margin: 14px 0 6px; }
+    input { width: 100%; box-sizing: border-box; padding: 11px 14px; background: #0a0b0f; border: 1px solid #22283a; color: #eef1f6; border-radius: 8px; font: 14px ui-monospace, SF Mono, Menlo, monospace; letter-spacing: 0.03em; outline: none; }
+    input:focus { border-color: #5a7cff; box-shadow: 0 0 0 3px rgba(90,124,255,0.15); }
+    button { margin-top: 20px; width: 100%; padding: 12px; background: #5a7cff; color: #fff; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    button:hover { background: #4668e8; }
+    button:disabled { background: #333a46; cursor: not-allowed; }
+    .status { margin-top: 14px; min-height: 20px; font-size: 13px; }
+    .status.ok { color: #7bd297; }
+    .status.err { color: #f5caca; }
+    .foot { margin-top: 24px; padding-top: 18px; border-top: 1px solid #22283a; color: #6b7380; font-size: 12px; display: flex; justify-content: space-between; }
+    .foot a { color: #7f9bff; text-decoration: none; cursor: pointer; }
+    .foot a:hover { text-decoration: underline; }
+    .device { color: #6b7380; font-size: 11.5px; margin-top: 10px; font-family: ui-monospace, SF Mono, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="4" rx="1" fill="#5a7cff"/><rect x="2" y="10" width="14" height="4" rx="1" fill="#9ba3af"/><rect x="2" y="16" width="18" height="4" rx="1" fill="#5a7cff"/></svg>
+      <span>TabFleet</span>
+    </div>
+    <h1>Activate your license</h1>
+    <p>Paste the license key we emailed you. Each key activates on one device per Solo seat, three per Pro seat.</p>
+
+    <form id="form">
+      <label for="key">License key</label>
+      <input id="key" placeholder="TF-XXXX-YYYY-ZZZZ" autocomplete="off" autofocus>
+      <button id="submit" type="submit">Activate</button>
+    </form>
+    <div class="status" id="status"></div>
+    <div class="device" id="device"></div>
+
+    <div class="foot">
+      <span>Need a key?</span>
+      <a id="buy">Get one at tabfleet.app →</a>
+    </div>
+  </div>
+
+  <script src="./login.js"></script>
+</body>
+</html>

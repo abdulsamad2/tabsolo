@@ -1,0 +1,22 @@
+name = "tabfleet-api"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Set these before `wrangler deploy`:
+#   wrangler secret put ADMIN_TOKEN
+#   wrangler secret put HMAC_SECRET
+# ADMIN_TOKEN  — bearer token for the admin endpoints (/admin/licenses, …)
+# HMAC_SECRET  — signs the activation tokens the client caches
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tabfleet"
+database_id = "replace-me-after-running-wrangler-d1-create"
+migrations_dir = "migrations"
+
+[vars]
+# Hard-coded, non-secret config.
+APP_NAME = "TabFleet"
+# How long a cached activation token is valid before the client must re-validate (ms).
+GRACE_PERIOD_MS = "604800000"   # 7 days
