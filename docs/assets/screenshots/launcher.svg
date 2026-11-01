@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" font-family="-apple-system, BlinkMacSystemFont, 'Inter', sans-serif">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#1a1f29"/><stop offset="1" stop-color="#0a0b0f"/>
+    </radialGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="20" stdDeviation="40" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="800" fill="url(#bg)" rx="14"/>
+
+  <!-- Window chrome -->
+  <circle cx="24" cy="22" r="6" fill="#ff5f57"/>
+  <circle cx="46" cy="22" r="6" fill="#febc2e"/>
+  <circle cx="68" cy="22" r="6" fill="#28c840"/>
+  <text x="600" y="26" text-anchor="middle" fill="#6b7380" font-size="12" font-weight="500">TabFleet · Launch session</text>
+
+  <!-- Launcher card -->
+  <g transform="translate(240, 110)" filter="url(#shadow)">
+    <rect width="720" height="620" fill="#141821" stroke="#2a303a" stroke-width="1" rx="16"/>
+    <!-- Logo -->
+    <g transform="translate(42, 36)">
+      <rect x="0" y="2" width="24" height="4" rx="1" fill="#5a7cff"/>
+      <rect x="0" y="12" width="16" height="4" rx="1" fill="#9ba3af"/>
+      <rect x="0" y="22" width="20" height="4" rx="1" fill="#5a7cff"/>
+      <text x="40" y="22" fill="#eef1f6" font-size="20" font-weight="700">TabFleet</text>
+      <text x="40" y="40" fill="#6b7380" font-size="11">New session · v1.3.14</text>
+    </g>
+
+    <!-- Proxy source -->
+    <text x="42" y="130" fill="#7f9bff" font-size="11" font-weight="700" letter-spacing="1.5">PROXY SOURCE</text>
+    <g font-size="13" font-weight="500">
+      <!-- Direct -->
+      <rect x="42" y="146" width="156" height="38" fill="#1b212b" stroke="#2a303a" rx="8"/>
+      <text x="120" y="170" text-anchor="middle" fill="#a4acb8">Direct</text>
+      <!-- Proxy list ACTIVE -->
+      <rect x="206" y="146" width="156" height="38" fill="#20283a" stroke="#5a7cff" stroke-width="1.5" rx="8"/>
+      <text x="284" y="170" text-anchor="middle" fill="#eef1f6">Proxy list</text>
+      <!-- Gateway -->
+      <rect x="370" y="146" width="176" height="38" fill="#1b212b" stroke="#2a303a" rx="8"/>
+      <text x="458" y="170" text-anchor="middle" fill="#a4acb8">Rotating gateway</text>
+      <!-- Remote URL -->
+      <rect x="554" y="146" width="124" height="38" fill="#1b212b" stroke="#2a303a" rx="8"/>
+      <text x="616" y="170" text-anchor="middle" fill="#a4acb8">Remote URL</text>
+    </g>
+
+    <!-- Proxy list textarea -->
+    <rect x="42" y="198" width="636" height="200" fill="#0a0b0f" stroke="#2a303a" rx="10"/>
+    <g font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#a4acb8">
+      <text x="60" y="222">proxy01.example.net:3128:user01:••••••••</text>
+      <text x="60" y="242">proxy02.example.net:3128:user02:••••••••</text>
+      <text x="60" y="262">proxy03.example.net:3128:user03:••••••••</text>
+      <text x="60" y="282">proxy04.example.net:3128:user04:••••••••</text>
+      <text x="60" y="302">proxy05.example.net:3128:user05:••••••••</text>
+      <text x="60" y="322">proxy06.example.net:3128:user06:••••••••</text>
+      <text x="60" y="342">proxy07.example.net:3128:user07:••••••••</text>
+      <text x="60" y="362">… 18 more</text>
+      <text x="60" y="386" fill="#6b7380" font-size="11">25 proxies loaded · format host:port:user:pass</text>
+    </g>
+
+    <!-- Account group -->
+    <text x="42" y="432" fill="#7f9bff" font-size="11" font-weight="700" letter-spacing="1.5">ACCOUNT GROUP</text>
+    <g font-size="13" font-weight="500">
+      <rect x="42" y="448" width="200" height="38" fill="#20283a" stroke="#5a7cff" stroke-width="1.5" rx="8"/>
+      <circle cx="60" cy="467" r="5" fill="#c91c1c"/>
+      <text x="76" y="472" fill="#eef1f6">Primetime Stubs</text>
+      <text x="76" y="486" fill="#6b7380" font-size="10">42 accounts</text>
+
+      <rect x="250" y="448" width="180" height="38" fill="#1b212b" stroke="#2a303a" rx="8"/>
+      <circle cx="268" cy="467" r="5" fill="#4c6ef5"/>
+      <text x="284" y="472" fill="#a4acb8">Sidekick Resale</text>
+
+      <rect x="438" y="448" width="180" height="38" fill="#1b212b" stroke="#2a303a" rx="8"/>
+      <circle cx="456" cy="467" r="5" fill="#15803d"/>
+      <text x="472" y="472" fill="#a4acb8">Fast Lane Group</text>
+    </g>
+
+    <!-- Options -->
+    <g font-size="12" fill="#a4acb8">
+      <rect x="42" y="504" width="18" height="18" fill="#5a7cff" stroke="#5a7cff" rx="4"/>
+      <text x="52" y="518" fill="#fff" font-size="12" font-weight="700">✓</text>
+      <text x="70" y="518" fill="#eef1f6">Set the clock to the proxies' timezone</text>
+
+      <rect x="42" y="534" width="18" height="18" fill="#1b212b" stroke="#333a46" rx="4"/>
+      <text x="70" y="548" fill="#eef1f6">Auto-open new invoiced orders</text>
+    </g>
+
+    <!-- Launch -->
+    <g transform="translate(42, 574)">
+      <rect width="636" height="48" fill="#5a7cff" rx="10"/>
+      <text x="318" y="31" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Launch session →</text>
+    </g>
+  </g>
+</svg>
