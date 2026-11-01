@@ -12,17 +12,17 @@
     .logo svg { flex-shrink: 0; }
     h1 { margin: 0 0 6px; font-size: 20px; letter-spacing: -0.02em; }
     p { margin: 0 0 18px; color: #a4acb8; font-size: 13.5px; }
-    label { display: block; color: #7f9bff; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; margin: 14px 0 6px; }
+    label { display: block; color: #a4acb8; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; margin: 14px 0 6px; }
     input { width: 100%; box-sizing: border-box; padding: 11px 14px; background: #0a0b0f; border: 1px solid #22283a; color: #eef1f6; border-radius: 8px; font: 14px ui-monospace, SF Mono, Menlo, monospace; letter-spacing: 0.03em; outline: none; }
-    input:focus { border-color: #5a7cff; box-shadow: 0 0 0 3px rgba(90,124,255,0.15); }
-    button { margin-top: 20px; width: 100%; padding: 12px; background: #5a7cff; color: #fff; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
-    button:hover { background: #4668e8; }
-    button:disabled { background: #333a46; cursor: not-allowed; }
+    input:focus { border-color: #1971c2; box-shadow: 0 0 0 3px rgba(25,113,194,0.25); }
+    button { font-family: inherit; margin-top: 20px; width: 100%; padding: 12px; background: #1971c2; color: #fff; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    button:hover { background: #145a9c; }
+    button:disabled { background: #333a46; color: #a4acb8; cursor: not-allowed; }
     .status { margin-top: 14px; min-height: 20px; font-size: 13px; }
     .status.ok { color: #7bd297; }
     .status.err { color: #f5caca; }
     .foot { margin-top: 24px; padding-top: 18px; border-top: 1px solid #22283a; color: #6b7380; font-size: 12px; display: flex; justify-content: space-between; }
-    .foot a { color: #7f9bff; text-decoration: none; cursor: pointer; }
+    .foot a { color: #a4acb8; text-decoration: none; cursor: pointer; }
     .foot a:hover { text-decoration: underline; }
     .device { color: #6b7380; font-size: 11.5px; margin-top: 10px; font-family: ui-monospace, SF Mono, Menlo, monospace; }
   </style>
@@ -30,15 +30,15 @@
 <body>
   <div class="card">
     <div class="logo">
-      <svg width="24" height="24" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="4" rx="1" fill="#5a7cff"/><rect x="2" y="10" width="14" height="4" rx="1" fill="#9ba3af"/><rect x="2" y="16" width="18" height="4" rx="1" fill="#5a7cff"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="4" rx="1" fill="#1971c2"/><rect x="2" y="10" width="14" height="4" rx="1" fill="#9ba3af"/><rect x="2" y="16" width="18" height="4" rx="1" fill="#1971c2"/></svg>
       <span>TabSolo</span>
     </div>
     <h1>Activate your license</h1>
-    <p>Paste the license key we emailed you. Each key activates on one device per Solo seat, three per Pro seat.</p>
+    <p>Paste the license key from your account page. It works on a limited number of computers.</p>
 
     <form id="form">
       <label for="key">License key</label>
-      <input id="key" placeholder="TF-XXXX-YYYY-ZZZZ" autocomplete="off" autofocus>
+      <input id="key" placeholder="TS-XXXX-XXXX-XXXX" autocomplete="off" autofocus>
       <button id="submit" type="submit">Activate</button>
     </form>
     <div class="status" id="status"></div>

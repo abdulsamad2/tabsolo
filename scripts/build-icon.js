@@ -15,7 +15,8 @@ const zlib = require('node:zlib');
 
 const PNG_SIZE = 512;
 const ICO_SIZE = 256;
-const BG = [28, 126, 214, 255];       // #1c7ed6 — TabSolo accent
+const BG = [25, 113, 194, 255];       // #1971c2 — TabSolo brand, same as the website's mark
+const INK = [255, 255, 255];          // white — the letter
 const HI = [255, 255, 255, 36];       // soft diagonal highlight
 
 /** Writes a solid-rounded-square RGBA pixel buffer with a diagonal highlight overlay. */
@@ -54,10 +55,10 @@ function makePixels(SIZE) {
       const inStem = y >= letterTop + barThickness && x >= letterStemLeft && x < letterStemRight;
       if (!inBar && !inStem) continue;
       const i = (y * SIZE + x) * 4;
-      // Soft mix so the mark reads as a tinted highlight on the accent, not a flat label.
-      buf[i] = Math.round(buf[i] + (255 - buf[i]) * (letterA / 255));
-      buf[i + 1] = Math.round(buf[i + 1] + (255 - buf[i + 1]) * (letterA / 255));
-      buf[i + 2] = Math.round(buf[i + 2] + (255 - buf[i + 2]) * (letterA / 255));
+      // Soft mix so the mark reads as part of the mark, not a flat label.
+      buf[i] = Math.round(buf[i] + (INK[0] - buf[i]) * (letterA / 255));
+      buf[i + 1] = Math.round(buf[i + 1] + (INK[1] - buf[i + 1]) * (letterA / 255));
+      buf[i + 2] = Math.round(buf[i + 2] + (INK[2] - buf[i + 2]) * (letterA / 255));
     }
   }
   return buf;
