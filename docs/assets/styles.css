@@ -218,6 +218,56 @@ h1, h2, h3, h4 { letter-spacing: -0.02em; }
 .step-shot img { width: 100%; display: block; }
 .step-shot .shot-placeholder { min-height: 320px; }
 
+/* ============ COMPARE TABLE ============ */
+.compare-wrap { overflow-x: auto; margin: 0 auto 40px; }
+.compare {
+  width: 100%; min-width: 820px; max-width: 1100px; margin: 0 auto;
+  border-collapse: separate; border-spacing: 0;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+  font-size: 13.5px;
+}
+.compare thead th {
+  padding: 16px 12px; text-align: center;
+  color: var(--text-mute); font-weight: 600; font-size: 12.5px;
+  background: var(--bg-elev-2); border-bottom: 1px solid var(--border);
+}
+.compare thead th.us {
+  color: var(--accent-2); font-size: 15px;
+  background: linear-gradient(180deg, rgba(90,124,255,0.12), transparent);
+  border-bottom: 1px solid var(--accent);
+}
+.compare thead th:first-child { text-align: left; padding-left: 20px; }
+.compare tbody td {
+  padding: 12px; text-align: center; color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+.compare tbody td:first-child {
+  text-align: left; padding-left: 20px; color: var(--text-mute); font-weight: 500;
+}
+.compare tbody tr:last-child td { border-bottom: none; }
+.compare tbody td.us {
+  background: rgba(90,124,255,0.07); color: var(--text); font-weight: 600;
+}
+.compare tbody td.x { color: #c91c1c; font-weight: 700; }
+.compare tbody td.dash { color: var(--text-faint); font-size: 12px; font-style: italic; }
+.compare-note { text-align: center; color: var(--text-faint); font-size: 12.5px; margin: 0 0 40px; }
+
+.versus {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;
+  max-width: 1000px; margin: 0 auto;
+}
+.versus article {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 24px;
+}
+.versus h3 { font-size: 16px; margin: 0 0 10px; color: var(--accent-2); }
+.versus p { margin: 0; color: var(--text-mute); font-size: 14px; line-height: 1.6; }
+.versus strong { color: var(--text); }
+@media (max-width: 800px) {
+  .versus { grid-template-columns: 1fr; }
+}
+
 /* ============ USE CASES ============ */
 .cases {
   display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;
