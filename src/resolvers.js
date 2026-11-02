@@ -99,11 +99,11 @@ const AUTOMATIQ_HOST_TO_SITE = [
 ];
 
 /** Runs a resolver entry. Returns { value } or { error } (never throws). */
-async function runResolver(entry, profile, tabUrl) {
+async function runResolver(entry, profile, tabUrl, opts = {}) {
   try {
     if (entry.resolver === 'static') return { value: entry.value };
     if (entry.resolver === 'textchest' || entry.resolver === 'textchest-async') {
-      return fetchTextChest(entry, profile);
+      return fetchTextChest(entry, profile, opts);
     }
     if (entry.resolver === 'automatiq') {
       return fetchAutomatiq(entry, profile, tabUrl);
@@ -127,11 +127,16 @@ async function runResolver(entry, profile, tabUrl) {
  */
 const textChestActivated = new Set(); // `${apiKey}:${number}` entries we've already activated this run.
 
-async function fetchTextChest(entry, profile) {
+async function fetchTextChest(entry, profile, opts = {}) {
+  const sinceTs = Number(opts.sinceTs) || 0; // only accept a message at/after this epoch-ms (auto-OTP watcher)
   const [apiKey, parser = DEFAULT_PARSER] = entry.args ?? [];
   if (!apiKey) return { error: '#NO API KEY' };
-  const number = String(profile.smsNumber ?? '').replace(/\D/g, '');
+  let number = String(profile.smsNumber ?? '').replace(/\D/g, '');
   if (!number) return { error: '#NO SMS NUMBER' };
+  // TextChest keys SMS by the full number incl. the country code. US/Canada numbers written as 10
+  // digits (very common in imported sheets) return an empty inbox, so add the leading 1 — verified
+  // against the live API: the same number gives messages as 1XXXXXXXXXX but [] as XXXXXXXXXX.
+  if (number.length === 10) number = `1${number}`;
 
   const isAsync = entry.resolver === 'textchest-async';
   const basicHeader = `Basic ${Buffer.from(`${apiKey}:`).toString('base64')}`;
@@ -193,10 +198,12 @@ async function fetchTextChest(entry, profile) {
   }
   const sorted = [...messages].sort((a, b) => Number(b?.ts ?? 0) - Number(a?.ts ?? 0));
   for (const message of sorted) {
+    if (sinceTs && Number(message?.ts ?? 0) < sinceTs) continue; // older than the watcher's baseline — skip stale codes
     const body = String(message?.msg ?? message?.message ?? message?.body ?? '');
     const code = extractCode(null, body);
-    if (code) return { value: code };
+    if (code) return { value: code, ts: Number(message?.ts) || 0 };
   }
+  if (sinceTs) return { error: `#NO NEW MSG (no code newer than baseline on ${number}) → GET ${url}` };
   const preview = String(sorted[0]?.msg ?? JSON.stringify(sorted[0] ?? {})).slice(0, 100).replace(/\s+/g, ' ');
   return { error: `#NO MSG (no digits in latest message: ${preview}) → GET ${url}` };
 }
@@ -277,7 +284,7 @@ function extractCode(data, raw) {
 }
 
 /** Returns { field: value } for every resolver that matches this tab URL. Errors are collected. */
-async function resolveForTab(profile, tabUrl) {
+async function resolveForTab(profile, tabUrl, opts = {}) {
   // If the profile carries a bare TextChest API key (no explicit resolver), synthesise one on
   // Site:* so autofill picks it up automatically.
   const resolvers = [...(profile.resolvers ?? [])];
@@ -292,7 +299,7 @@ async function resolveForTab(profile, tabUrl) {
   for (const field of FIELDS) {
     const entries = pickAllResolvers(augmentedProfile, field, tabUrl);
     for (const entry of entries) {
-      const result = await runResolver(entry, augmentedProfile, tabUrl);
+      const result = await runResolver(entry, augmentedProfile, tabUrl, opts);
       if (result.value) { values[field] = result.value; break; }
       errors.push(`${field} (${entry.resolver}): ${result.error}`);
     }

@@ -681,6 +681,15 @@ function buildAutofillScript(profile, card, extras = {}) {
     cvvByLast4: cvvByLast4(profile.cards),
     cardHintLast4: extras.cardHintLast4 ?? '',
   };
+  // OTP-only fill (the auto-OTP watcher): blank every value but the one-time code, so inserting the
+  // arrived code never re-touches the rest of the form.
+  if (extras.otpOnly) {
+    for (const key of Object.keys(values)) {
+      if (key === 'otp') continue;
+      values[key] = typeof values[key] === 'boolean' ? false
+        : (values[key] && typeof values[key] === 'object' ? {} : '');
+    }
+  }
   return `(${pageAutofill.toString()})(${JSON.stringify(values)})`;
 }
 

@@ -725,7 +725,7 @@ function renderProfileDetails(profile, tab) {
     const code = otpCodes.get(profile.id) ?? '';
     rows.push(detailRow('OTP Code', code, {
       copy: code,
-      extra: [iconButton('↻', 'fetch-otp', 'Fetch the latest code (and copy it)')],
+      extra: [iconButton('↻', 'fetch-otp', 'Watch for the code and fill it into the page automatically when it arrives (also copies it)')],
     }));
   }
   if (profile.dob) rows.push(detailRow('Birthday', profile.dob));
@@ -2211,11 +2211,13 @@ $('#profile-details').addEventListener('click', async (event) => {
   } else if (action === 'fetch-otp') {
     button.disabled = true;
     try {
-      const result = await window.fleet.invoke('fetchOTP', state.selectedId);
+      // Watches for the code and fills it into the page; the background progress/result is surfaced
+      // via the notice bar from main. The one-shot (OTP-URL) path returns the code directly.
+      const result = await window.fleet.invoke('watchOTP', state.selectedId);
       if (result?.code) {
         otpCodes.set(profile.id, result.code);
         renderPanel();
-        showNotice(`OTP ${result.code} copied to clipboard.`);
+        showNotice(result.error || `OTP ${result.code} filled in.`);
       } else if (result?.error) showNotice(result.error);
     } finally {
       button.disabled = false;

@@ -1685,6 +1685,7 @@ function destroyView(view) {
 }
 
 function destroyTab(tab) {
+  stopOTPWatch(tab.id); // stop any OTP poll bound to this tab
   if (tab.playbookRunId) stopPlaybook(tab.playbookRunId); // don't strand a running playbook's state + its view
   clearTimer(tab);
   forgetLoads(tab);
@@ -2334,6 +2335,84 @@ async function fetchOTPForTab(tab) {
   }
   if (parts.length === 0) parts.push('No code arrived yet — trigger the SMS again and retry.');
   return { error: `OTP failed. ${parts.join(' · ')}` };
+}
+
+// ---------- Auto-OTP: watch for a fresh code and fill it straight into the page ----------
+const otpWatchers = new Map(); // tabId -> timeout handle
+
+function stopOTPWatch(tabId) {
+  const timer = otpWatchers.get(tabId);
+  if (timer) { clearTimeout(timer); otpWatchers.delete(tabId); }
+}
+
+/** The OTP code resolvable for the tab now, or null. With sinceTs set, TextChest only returns a
+ * message newer than that (so a stale code isn't filled); otpUrl is consulted only in one-shot mode. */
+async function resolveOTPCode(tab, sinceTs = 0) {
+  const profile = findProfile(tab.profileId);
+  if (!profile) return null;
+  const resolved = await resolveForTab(profile, tab.view.webContents.getURL(), { sinceTs });
+  const code = resolved.values.smscode || resolved.values.emailcode || resolved.values.othercode;
+  if (code) return code;
+  if (!sinceTs) {
+    const urlResult = await fetchSyncValue(profile.otpUrl, profile.otpAuth, 'otp');
+    if (urlResult.value) return urlResult.value;
+  }
+  return null;
+}
+
+/** Fills `code` into just the page's one-time-code field, across every frame. Returns how many filled. */
+async function insertOTP(tab, code) {
+  const profile = findProfile(tab.profileId);
+  if (!profile) return 0;
+  const script = buildAutofillScript(profile, null, { otp: code, otpOnly: true });
+  let filled = 0;
+  for (const frame of tab.view.webContents.mainFrame.framesInSubtree) {
+    try { const r = await frame.executeJavaScript(script); filled += Number(r?.filled) || 0; } catch {}
+  }
+  return filled;
+}
+
+/**
+ * Watches for the OTP to arrive and fills it into the page automatically. For a TextChest source it
+ * accepts only a message from the last ~30s (so a stale code from a previous login isn't filled),
+ * polling every 4s for up to 2 minutes. A non-timestamped source (OTP URL) does a single fill now.
+ * Idempotent per tab; cleared on tab close.
+ */
+async function watchAndInsertOTP(tab) {
+  const profile = findProfile(tab.profileId);
+  if (!profile) return { error: 'Assign a profile to this tab first.' };
+  const hasTextChest = Boolean(profile.textChestKey)
+    || (profile.resolvers ?? []).some((c) => c.entries.some((e) => e.field === 'smscode' && (e.resolver === 'textchest' || e.resolver === 'textchest-async')));
+  stopOTPWatch(tab.id);
+
+  if (!hasTextChest) {
+    // No timestamped inbox to wait on — resolve whatever's available and fill it once.
+    const code = await resolveOTPCode(tab, 0);
+    if (!code) return { error: 'No OTP available yet. Trigger the code, then try again.' };
+    const filled = await insertOTP(tab, code);
+    clipboard.writeText(encryptForClipboard(code));
+    return filled > 0 ? { code } : { code, error: `OTP ${code} copied — no code field found on the page.` };
+  }
+
+  const sinceTs = Date.now() - 30_000; // a code that landed just before the click still counts; older ones don't
+  const deadline = Date.now() + 120_000;
+  notify('Watching for the OTP — it will fill into the page as soon as it arrives.');
+  const tick = async () => {
+    if (!tabs.includes(tab) || tab.view.webContents.isDestroyed()) return stopOTPWatch(tab.id);
+    let code = null;
+    try { code = await resolveOTPCode(tab, sinceTs); } catch {}
+    if (code) {
+      stopOTPWatch(tab.id);
+      const filled = await insertOTP(tab, code);
+      clipboard.writeText(encryptForClipboard(code));
+      notify(filled > 0 ? `OTP filled in (${code}).` : `OTP ${code} ready and copied — no code field on the page.`);
+      return;
+    }
+    if (Date.now() >= deadline) { stopOTPWatch(tab.id); notify('No OTP arrived within 2 minutes. Trigger it again and retry.'); return; }
+    otpWatchers.set(tab.id, setTimeout(tick, 4000));
+  };
+  otpWatchers.set(tab.id, setTimeout(tick, 0)); // check immediately, then poll
+  return { watching: true };
 }
 
 async function autofill(tab, cardIndex = 0) {
@@ -3181,6 +3260,7 @@ const commands = {
   autoLogin: (tab, cardIndex) => autoLogin(tab, cardIndex),
   submitForm: (tab) => submitForm(tab),
   fetchOTP: (tab) => fetchOTPForTab(tab),
+  watchOTP: (tab) => watchAndInsertOTP(tab),
   copySecret: (tab, field) => copySecret(tab, field),
   diagnoseSync: (tab) => diagnoseSync(tab),
   burn: (tab) => burnIP(tab),
