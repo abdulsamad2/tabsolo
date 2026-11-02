@@ -590,6 +590,10 @@ function searchProfiles(query) {
 
 /** One-time OTP codes fetched for each profile, shown in the details view until the next fetch. */
 const otpCodes = new Map();
+// profileId -> { tabId, url, at }: where/when a shown OTP was fetched, so it's dropped once used
+// (its tab navigates away) or expires — a stale code must never linger for the user to re-copy.
+const otpCodeOrigin = new Map();
+const OTP_TTL_MS = 150000; // OTPs are short-lived; drop a shown one after 2.5 min regardless
 
 function hasOtpSource(profile) {
   const hasResolver = (profile.resolvers ?? []).some((col) =>
@@ -2215,7 +2219,9 @@ $('#profile-details').addEventListener('click', async (event) => {
       // via the notice bar from main. The one-shot (OTP-URL) path returns the code directly.
       const result = await window.fleet.invoke('watchOTP', state.selectedId);
       if (result?.code) {
+        const t = selectedTab();
         otpCodes.set(profile.id, result.code);
+        otpCodeOrigin.set(profile.id, { tabId: t?.id, url: t?.url ?? '', at: Date.now() });
         renderPanel();
         showNotice(result.error || `OTP ${result.code} filled in.`);
       } else if (result?.error) showNotice(result.error);
@@ -3250,6 +3256,15 @@ window.fleet.onState((next) => {
   // Learn from where the user has actually been: any URL in the current state that isn't already
   // in the recent list is prepended. Keeps the autocomplete tied to real usage.
   for (const t of next.tabs ?? []) if (t.url) rememberURL(t.url);
+  // Drop a shown OTP once it's been used: its tab navigated away (code submitted), the tab closed,
+  // or it's older than the OTP lifetime. Stops the user re-copying a stale code on the next login.
+  for (const [pid, origin] of otpCodeOrigin) {
+    const t = next.tabs?.find((x) => x.id === origin.tabId);
+    if (!t || t.url !== origin.url || Date.now() - origin.at > OTP_TTL_MS) {
+      otpCodes.delete(pid);
+      otpCodeOrigin.delete(pid);
+    }
+  }
   state = next;
   render();
   if (!$('#group-sheet').hidden && groupDialog.renaming === null) renderGroupDialog();
