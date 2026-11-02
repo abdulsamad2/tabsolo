@@ -11,6 +11,9 @@
 //   POST /admin/license          — admin-only: issue a license
 //   POST /admin/revoke           — admin-only: revoke a license or a single device activation
 //   POST /admin/plan-end         — admin-only: set the date a whole plan (e.g. the free beta) stops working
+//   GET  /admin/plan-ends        — admin-only: the plans with an end date
+//   POST /admin/license/update   — admin-only: restore a revoked license or change its device limit
+//   GET  /admin/telemetry        — admin-only: recent errors and the week's top events, as JSON
 //   GET  /admin/dashboard        — admin-only: minimal HTML dashboard (recent errors + events)
 //
 // Signed activation token (returned by /activate, cached by the client, re-sent on /validate):
@@ -401,6 +404,39 @@ app.post('/admin/revoke', async (c) => {
 });
 
 // Minimal HTML dashboard — recent events + errors + license summary.
+app.get('/admin/plan-ends', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const { results } = await c.env.DB.prepare('SELECT plan, ends_at FROM plan_ends').all();
+  return c.json({ ok: true, planEnds: results });
+});
+
+// Body: { key, status?: 'active' | 'revoked', max_devices?: 1-100 }. Restoring doesn't bring back
+// removed computers; they activate again with the key.
+app.post('/admin/license/update', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const body = await c.req.json<any>().catch(() => null);
+  const { key, status, max_devices: maxDevices } = body ?? {};
+  if (typeof key !== 'string' || !key) return badRequest('key required');
+  if (status !== undefined && status !== 'active' && status !== 'revoked') return badRequest('status must be active or revoked');
+  if (maxDevices !== undefined && (!Number.isInteger(maxDevices) || maxDevices < 1 || maxDevices > 100)) return badRequest('max_devices must be 1-100');
+  if (status === undefined && maxDevices === undefined) return badRequest('nothing to update');
+  const { meta } = await c.env.DB
+    .prepare('UPDATE licenses SET status = COALESCE(?, status), max_devices = COALESCE(?, max_devices) WHERE key = ?')
+    .bind(status ?? null, maxDevices ?? null, key)
+    .run();
+  if (!meta.changes) return c.json({ ok: false, error: 'not_found' }, 404);
+  return c.json({ ok: true });
+});
+
+app.get('/admin/telemetry', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const [errors, events] = await Promise.all([
+    c.env.DB.prepare('SELECT id, kind, message, app_version, os, created_at FROM telemetry_errors ORDER BY created_at DESC LIMIT 50').all(),
+    c.env.DB.prepare('SELECT name, COUNT(*) AS n FROM telemetry_events WHERE created_at > ? GROUP BY name ORDER BY n DESC LIMIT 25').bind(Date.now() - 7 * 24 * 3600_000).all(),
+  ]);
+  return c.json({ ok: true, errors: errors.results, events: events.results });
+});
+
 app.get('/admin/dashboard', async (c) => {
   const bad = requireAdmin(c); if (bad) return bad;
   const [licenses, errors, events] = await Promise.all([
