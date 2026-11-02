@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Shown until the renderer has its initial state, so the window isn't a blank white box on launch. -->
+  <div id="boot" role="status" aria-live="polite">
+    <div class="boot-spinner" aria-hidden="true"></div>
+    <p>Starting TabSolo…</p>
+  </div>
   <main id="launcher" hidden>
     <form id="launch-form" class="card" novalidate>
       <header>
@@ -163,7 +168,7 @@
               <span class="picker-label">Profile</span>
               <span class="picker-caret" aria-hidden="true">▾</span>
             </button>
-            <div id="profile-picker-menu" hidden role="listbox">
+            <div id="profile-picker-menu" hidden>
               <div id="picker-search-context" class="picker-context" hidden>
                 <span>Choose the profile to search with</span>
                 <strong id="picker-search-event"></strong>
@@ -174,8 +179,9 @@
                 <span class="picker-group-name"></span>
                 <button type="button" class="link" id="picker-change-group" title="The group is locked for this session">🔒 Locked</button>
               </div>
-              <input id="profile-search" type="search" placeholder="Search profiles…" autocomplete="off">
-              <ul id="profile-results"></ul>
+              <input id="profile-search" type="search" placeholder="Search profiles…" autocomplete="off"
+                     role="combobox" aria-expanded="false" aria-controls="profile-results" aria-autocomplete="list" aria-label="Search profiles">
+              <ul id="profile-results" role="listbox" aria-label="Profiles"></ul>
             </div>
           </div>
           <button id="manage-menu-btn" class="icon" title="Manage profiles" aria-label="Manage profiles" aria-haspopup="true">⋯</button>
@@ -205,12 +211,12 @@
         <form id="profile-editor" hidden novalidate autocomplete="off">
           <h4 id="editor-title">New profile</h4>
           <div class="grid2">
-            <label>Profile name *<input name="profile" type="text" spellcheck="false"></label>
+            <label>Profile name *<input name="profile" type="text" spellcheck="false" required></label>
             <label>Group<input name="group" type="text" spellcheck="false"></label>
           </div>
           <div class="grid2">
             <label>Site<input name="site" type="text" spellcheck="false" placeholder="Ticketmaster"></label>
-            <label>Full name *<input name="name" type="text"></label>
+            <label>Full name *<input name="name" type="text" required></label>
           </div>
           <div class="grid2">
             <label class="check"><input name="favorite" type="checkbox"><span>★ Favorite</span></label>
@@ -221,7 +227,7 @@
             <label>Buyer<input name="buyer" type="text" placeholder="John, Jane"></label>
           </div>
           <label>Notes<textarea name="notes" rows="2" placeholder="Order numbers, loyalty IDs, anything the autofill shouldn't touch…"></textarea></label>
-          <label>Email (login) *<input name="email" type="email" spellcheck="false"></label>
+          <label>Email (login) *<input name="email" type="email" spellcheck="false" required></label>
           <label>Login password<input name="password" type="password" autocomplete="new-password"></label>
           <label class="check" data-when-saved="password" hidden><input name="clearPassword" type="checkbox"><span>Remove the saved password</span></label>
           <details class="editor-sync">
@@ -266,7 +272,7 @@
             <button type="button" id="card-add">Add card</button>
           </fieldset>
           <p class="hint">Passwords, card numbers and CVVs are encrypted with your system keychain and never shown again — replace or remove them instead.</p>
-          <p id="editor-errors" class="error" hidden></p>
+          <p id="editor-errors" class="error" role="alert" hidden></p>
           <div class="inline">
             <button type="submit" class="primary-soft">Save profile</button>
             <button type="button" id="editor-cancel">Cancel</button>
@@ -454,7 +460,7 @@
 
       <section class="settings-group">
         <h3>Browsing</h3>
-        <label class="check"><input id="setting-match-tz" type="checkbox"><span>Set the clock to the proxies' timezone<small class="hint">At Launch, looks up where your proxies' IPs are and sets the clock to their timezone, so sites see a time that agrees with the IP. Nothing inside the browser changes. On Windows the computer's timezone is changed while TabSolo runs and put back when it quits; on a Mac TabSolo restarts once in that timezone.</small></span></label>
+        <label class="check"><input id="setting-match-tz" type="checkbox"><span>Set the clock to the proxies' timezone<small class="hint">Each tab's pages use that tab's proxy timezone, not this computer's clock. A Los Angeles proxy shows Pacific time even when the computer is set to New York, Seoul, or anywhere else, and a tab on another proxy keeps its own time. This computer's clock is not changed.</small></span></label>
         <label class="check"><input id="setting-auto-open-orders" type="checkbox"><span>Auto-open new invoiced orders<small class="hint">Polls Automatiq every two minutes. For each new invoiced order a tab opens on the Ticketmaster search for its event. When the tab reaches a Ticketmaster event page an overlay highlights the matching Section · Row · Seats from the order; press <kbd>⌘ Enter</kbd> (or <kbd>Ctrl Enter</kbd>) to click the match. Final purchase is still manual.</small></span></label>
       </section>
 

@@ -47,8 +47,15 @@ function buildSeatMatchScript(order) {
     // Build with createElement + textContent so a hostile order field (section, row, orderId, seat
      // range) can't break out of the HTML context and run JS in the ticketmaster.com origin.
     const header = document.createElement('div');
-    header.style.cssText = 'opacity:.6;font-weight:500;font-size:11px;letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px';
-    header.textContent = \`TabSolo · Order #\${ORDER.orderId}\`;
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;opacity:.6;font-weight:500;font-size:11px;letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px';
+    const headerLabel = document.createElement('span');
+    headerLabel.textContent = \`TabSolo · Order #\${ORDER.orderId}\`;
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '✕';
+    closeBtn.setAttribute('aria-label', 'Dismiss');
+    closeBtn.style.cssText = 'all:unset;margin-left:auto;cursor:pointer;padding:0 2px;font-size:13px;line-height:1';
+    header.append(headerLabel, closeBtn);
     const status = document.createElement('div');
     status.id = '__fleet-seat-status';
     status.textContent = \`Scanning seatmap for Sec \${ORDER.section || '?'} Row \${ORDER.row || '?'} Seats \${seats.join('–') || '?'}…\`;
@@ -239,11 +246,13 @@ function buildSeatMatchScript(order) {
     document.addEventListener('keydown', keyHandler, true);
 
     // ----- Teardown on navigation ---------------------------------------------------------------
-    window.addEventListener('beforeunload', () => {
+    const teardown = () => {
       observer.disconnect();
       document.removeEventListener('keydown', keyHandler, true);
       banner.remove();
-    }, { once: true });
+    };
+    closeBtn.addEventListener('click', teardown);
+    window.addEventListener('beforeunload', teardown, { once: true });
   })();`;
 }
 

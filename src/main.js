@@ -39,7 +39,6 @@ const { withoutSecrets, mergeImported, decodeTextFile, parseProfilesCSV, buildPr
 const { resolveForTab } = require('./resolvers');
 const { parseSheetURL, csvExportURL, viewURL, isSheetsURL, sheetListURL, parseSheetList } = require('./sheets');
 const sync = require('./sync');
-const { windowsZoneFor, majorityZone } = require('./clock');
 const { execFile, execFileSync } = require('node:child_process');
 
 // Scrub the automation tells out of the UA and client hints before any session is created. Electron's
@@ -775,8 +774,7 @@ async function startSession(newConfig) {
     ? { ...config, proxySource: 'list', proxyList: await fetchRemoteProxyList(config.remote) }
     : config;
   pool = createPool(runtimeConfig);
-  // The clock is set before any tab opens, so every page sees the proxies' timezone from the start.
-  if (await applyClock(await sessionClockZone())) return relaunchForClock();
+  // Each tab sets its own page clock once its proxy is in place. The computer's clock stays as it is.
   tabs = [];
   selectedId = null;
   nextSlot = 1;
@@ -828,16 +826,22 @@ async function startSession(newConfig) {
   }
   sendState();
   saveSessionState();
+  // Now that a pool and tabs exist, the watcher can open order tabs safely.
+  if (settings.autoOpenOrders) startOrderWatcher();
 }
 
-function endSession() {
+// keepSnapshot: closing the window (esp. on macOS, where the app stays alive) must leave the saved
+// tabs on disk so the next launch can still offer "Restore N tabs?". Only an explicit "Start Over"
+// clears the snapshot.
+function endSession({ keepSnapshot = false } = {}) {
+  stopOrderWatcher(); // no session to open order tabs into
   for (const tab of tabs) destroyTab(tab);
   tabs = [];
   groups = [];
   profileSessions.clear();
   selectedId = null;
   mode = 'launcher';
-  clearSessionState();
+  if (!keepSnapshot) clearSessionState();
   sendState();
 }
 
@@ -875,6 +879,8 @@ function createTab({ url = config.startURL, opener = null, after = null, select 
     note: '',
     timer: null,
     timerDone: false,
+    timezone: null,
+    pageZone: null,
     profileId: inActiveGroup(findProfile(profileId)) ? profileId : null,
   };
   let ready = Promise.resolve();
@@ -1275,6 +1281,12 @@ function createView(tab) {
   contents.on('did-start-navigation', (details) => {
     if (!current() || !details.isMainFrame || details.isSameDocument) return;
     tab.favicon = null;
+    // about:blank is only the document the timezone override needs before the real page.
+    if (details.url !== 'about:blank') reapplyPageClock(tab);
+  });
+  contents.debugger.on('detach', () => {
+    if (!current() || contents.isDestroyed() || contents.isDevToolsOpened()) return;
+    setTimeout(() => current() && reapplyPageClock(tab), 50);
   });
   // The page itself has loaded (ads and trackers may keep going): its load slot is free for the next tab.
   const loaded = () => current() && releaseLoadSlot(tab);
@@ -1283,7 +1295,7 @@ function createView(tab) {
   // Remember where a main-frame navigation is heading, so a reload during it (e.g. after a proxy switch
   // drops connections) goes to that page rather than the last one that finished loading.
   contents.on('did-start-navigation', (details) => {
-    if (current() && details.isMainFrame && !details.isSameDocument) tab.pendingURL = details.url;
+    if (current() && details.isMainFrame && !details.isSameDocument && details.url !== 'about:blank') tab.pendingURL = details.url;
   });
   contents.on('did-navigate', (_event, url) => {
     if (!current()) return;
@@ -1365,14 +1377,9 @@ function createView(tab) {
 // ---------- Clock ----------
 //
 // A site sees the IP's location next to the browser's clock, and a US proxy with the computer's Korean
-// timezone doesn't add up. Pages get their clock from the computer they run on, so nothing inside the
-// browser is changed: at Launch, TabSolo looks up where the proxies' IPs are and sets the clock's
-// timezone to theirs, before any tab opens.
-// - Windows: the computer's timezone is set with tzutil (allowed for normal users) and put back when
-//   TabSolo quits (or on its next start, after a crash).
-// - macOS / Linux: changing the computer's timezone needs an admin password, so TabSolo runs its own
-//   processes in that timezone (TZ), which only takes effect from a process start: it restarts once and
-//   continues the launch, and starts in the same timezone next time.
+// timezone doesn't add up. Each tab's pages get that proxy's timezone through Chromium's timezone
+// override, so the computer's clock is never changed and two proxies in different zones don't share
+// one clock. The lookup runs before the first page load; later navigations keep the same override.
 // Settings → "Set the clock to the proxies' timezone".
 
 const TZ_LOOKUPS = process.env.TABSOLO_TZ_LOOKUP_URL
@@ -1444,39 +1451,13 @@ function proxyZone(proxy) {
   return proxyZones.get(key);
 }
 
-const CLOCK_LOG = process.env.TABSOLO_CLOCK_LOG; // tests: record the clock instead of changing it
-let clockZone = null; // the timezone pages see; null = the computer's own
+const CLOCK_LOG = process.env.TABSOLO_CLOCK_LOG; // tests: don't touch a Windows timezone a previous build left behind
+let clockZone = null; // no longer a process-wide zone; pages follow their own proxy
 
 function runText(command, args) {
   return new Promise((resolve) => {
     execFile(command, args, { windowsHide: true, timeout: 15000 }, (error, stdout) => resolve(error ? null : String(stdout).trim()));
   });
-}
-
-/** Up to 6 of the proxies this session's tabs will use: the group's account proxies, then the pool's. */
-function sampleProxies() {
-  const sample = [];
-  const seen = new Set();
-  const add = (proxy) => {
-    if (!proxy || sample.length >= 6 || seen.has(proxyKey(proxy))) return;
-    seen.add(proxyKey(proxy));
-    sample.push(proxy);
-  };
-  for (const profile of profiles.filter(inActiveGroup)) {
-    add(profile.pinnedProxy?.proxy);
-  }
-  if (pool?.enabled) {
-    if (pool.list.length > 0) pool.list.forEach(add);
-    else for (let i = 0; i < 3; i++) add(pool.next(pool.regions[0] ?? null));
-  }
-  return sample;
-}
-
-/** The timezone most of the session's proxies are in; null when tabs start on the local IP. */
-async function sessionClockZone() {
-  if (!settings.matchProxyTimezone || !pool?.enabled || config.startDirect) return null;
-  const zones = await Promise.all(sampleProxies().map((proxy) => Promise.race([proxyZone(proxy), sleep(6000).then(() => null)])));
-  return majorityZone(zones) ?? REGION_ZONES[String(pool.regions[0] ?? '').toLowerCase()] ?? null;
 }
 
 async function restoreWindowsClock() {
@@ -1487,96 +1468,100 @@ async function restoreWindowsClock() {
   }
 }
 
-/** Sets the clock to `zone` (null = the computer's own). Returns true when TabSolo must restart for it. */
-async function applyClock(zone) {
-  if (CLOCK_LOG) {
-    fs.appendFileSync(CLOCK_LOG, `${zone ?? ''}\n`);
-    clockZone = zone;
-    return false;
-  }
-  if (process.platform === 'win32') {
-    if (!zone) {
-      await restoreWindowsClock();
-      clockZone = null;
-      return false;
-    }
-    const target = windowsZoneFor(zone);
-    if (!target) {
-      notify(`Your proxies are in ${zone}, which TabSolo can't set on Windows; the clock stays as it is.`);
-      return false;
-    }
-    const current = await runText('tzutil', ['/g']);
-    if (current !== target) {
-      if (current && !settings.restoreZone) {
-        settings.restoreZone = current;
-        persistSettings();
-      }
-      if (await runText('tzutil', ['/s', target]) === null) {
-        notify(`Windows didn't allow changing the timezone to ${zone}; the clock stays as it is.`);
-        return false;
-      }
-      notify(`Clock set to ${zone}, where your proxies are. Windows gets its own timezone back when TabSolo quits.`);
-    }
-    clockZone = zone;
-    return false;
-  }
-  settings.clockZone = zone;
+/** The switch in Settings: open tabs follow their own proxy, or go back to this computer's clock, at once. */
+function clockSettingChanged() {
+  settings.clockZone = null;
   persistSettings();
-  if ((process.env.TZ ?? '') !== (zone ?? '')) return true;
-  clockZone = zone;
-  return false;
+  Promise.all(tabs.map((tab) => preparePageClock(tab))).then(() => {
+    if (mode !== 'browser') return;
+    notify(settings.matchProxyTimezone
+      ? "Each tab's clock follows that tab's proxy, not this computer's."
+      : "Tabs are using this computer's clock again.");
+  });
+}
+
+/** A guess when the IP lookup hasn't answered: the account's timezone, else the region's. */
+function fallbackZone(tab) {
+  return validZone(findProfile(tab.profileId)?.timeZone)
+    || REGION_ZONES[String(tab.region ?? '').toLowerCase()]
+    || null;
+}
+
+function attachPageDebugger(contents) {
+  if (!contents || contents.isDestroyed()) return false;
+  if (contents.debugger.isAttached()) return true;
+  try {
+    contents.debugger.attach('1.3');
+    return true;
+  } catch (error) {
+    return /already attached/i.test(String(error?.message));
+  }
+}
+
+/** Applies `zone` ('' = this computer's clock) to one page. Resolves false if Chromium rejects it. */
+function pushPageZone(contents, zone) {
+  if (!attachPageDebugger(contents)) return Promise.resolve(false);
+  return contents.debugger.sendCommand('Emulation.setTimezoneOverride', { timezoneId: zone || '' })
+    .then(() => true)
+    .catch(() => false);
 }
 
 /**
- * Starts TabSolo again with its clock in `zone` (macOS / Linux). Run from `npm start`, the start script
- * does it (exit code 75), so the app stays attached to the terminal.
+ * Sets the page clock before its scripts run. On a fresh view the override command doesn't finish
+ * until the first navigation, so it is sent and the caller navigates immediately; that navigation
+ * is what applies it. On a page that's already open, the command is waited on.
  */
-function restartWithClock(zone) {
-  if (zone) process.env.TZ = zone;
-  else delete process.env.TZ;
-  if (process.env.TABSOLO_RESTART_FILE) {
-    fs.writeFileSync(process.env.TABSOLO_RESTART_FILE, JSON.stringify({ tz: zone ?? '' }));
-    app.exit(75);
-    return;
+function setPageZone(contents, zone) {
+  if (!contents || contents.isDestroyed()) return Promise.resolve(false);
+  const pending = pushPageZone(contents, zone);
+  if (!contents.getURL()) {
+    pending.catch(() => {});
+    return Promise.resolve(contents.debugger.isAttached());
   }
-  app.relaunch();
-  app.exit(0);
+  return Promise.race([pending, sleep(3000).then(() => false)]);
 }
 
-/** Restarts TabSolo in the session's timezone and continues the launch there. */
-function relaunchForClock() {
-  settings.pendingLaunch = true;
-  persistSettings();
-  restartWithClock(settings.clockZone);
-}
-
-/** The switch in Settings: Windows goes back to its own timezone at once; elsewhere it applies from the next start. */
-function clockSettingChanged() {
-  if (settings.matchProxyTimezone) {
-    if (mode === 'browser') notify("The clock follows your proxies from the next Launch.");
-    return;
-  }
-  if (process.platform === 'win32' || CLOCK_LOG) {
-    applyClock(null);
-    sendState();
-    return;
-  }
-  settings.clockZone = null;
-  persistSettings();
-  if (clockZone) notify('The clock goes back to this computer\'s timezone the next time TabSolo starts.');
-}
-
-/** Looks up where the tab's proxy is, for the panel (it doesn't change the tab). */
-function refreshTabZone(tab) {
+/**
+ * Looks up where this tab's proxy is and makes the page clock follow it, whatever this computer's
+ * clock is set to. Tabs with no proxy, and the setting turned off, keep the computer's clock.
+ * `tab.timezone` is the looked-up zone (for the panel); `tab.pageZone` is the zone the page sees.
+ */
+async function preparePageClock(tab) {
+  const contents = tab.view?.webContents;
+  if (!contents || contents.isDestroyed()) return;
   const proxy = tab.proxy;
-  if (!proxy) {
-    tab.timezone = null;
+  let lookedUp = null;
+  if (proxy) {
+    lookedUp = await Promise.race([proxyZone(proxy), sleep(6000).then(() => null)]);
+    if (tab.proxy !== proxy || !tabs.includes(tab)) return;
+  }
+  tab.timezone = lookedUp;
+  const zone = settings.matchProxyTimezone && proxy ? (lookedUp || fallbackZone(tab)) : null;
+  if (!zone) {
+    // Nothing to follow: leave the computer's clock, and don't attach a debugger just to say so.
+    tab.pageZone = null;
+    if (contents.debugger.isAttached()) await pushPageZone(contents, '');
+    sendState();
     return;
   }
-  proxyZone(proxy).then((zone) => {
-    if (tab.proxy !== proxy || !tabs.includes(tab)) return;
-    tab.timezone = zone;
-    sendState();
+  tab.pageZone = zone;
+  const applied = await setPageZone(contents, zone);
+  if (tab.proxy !== proxy || !tabs.includes(tab)) return;
+  tab.pageZone = applied ? zone : null;
+  sendState();
+}
+
+/** Keeps a tab's page clock on its proxy across navigations, without waiting on the navigation. */
+function reapplyPageClock(tab) {
+  const contents = tab.view?.webContents;
+  if (!contents || contents.isDestroyed() || contents.isDevToolsOpened?.()) return;
+  const zone = settings.matchProxyTimezone ? (tab.pageZone || '') : '';
+  if (!zone && !contents.debugger.isAttached()) return;
+  pushPageZone(contents, zone).then((ok) => {
+    if (!ok && zone && tabs.includes(tab) && tab.view?.webContents === contents) {
+      tab.pageZone = null;
+      sendState();
+    }
   });
 }
 
@@ -1614,11 +1599,15 @@ function loadInTab(tab, input) {
 function loadWhenReady(tab, ready, url) {
   const gate = { url };
   tab.gate = gate;
-  return Promise.resolve(ready).then(() => {
+  return Promise.resolve(ready).then(async () => {
+    if (tab.gate !== gate) return;
+    // The page's first script must already see the proxy's timezone, not this computer's. But a
+    // failure here (e.g. the view was swapped mid-lookup) must never strand the gate: the page not
+    // loading at all, with refresh dead too, is far worse than a tab on the computer's clock.
+    try { await preparePageClock(tab); } catch {}
     if (tab.gate !== gate) return;
     tab.gate = null;
     loadInTab(tab, gate.url);
-    refreshTabZone(tab);
   }, (error) => {
     if (tab.gate !== gate) return;
     tab.gate = null;
@@ -1696,6 +1685,7 @@ function destroyView(view) {
 }
 
 function destroyTab(tab) {
+  if (tab.playbookRunId) stopPlaybook(tab.playbookRunId); // don't strand a running playbook's state + its view
   clearTimer(tab);
   forgetLoads(tab);
   destroyView(tab.view);
@@ -1765,7 +1755,7 @@ async function setSessionProxy(tab, proxy, { reload }) {
   if (entry) entry.proxy = proxy;
   try {
     await applyProxy(tab.view.webContents.session, proxy);
-    tabs.filter((t) => t.partition === tab.partition).forEach(refreshTabZone);
+    await Promise.all(tabs.filter((t) => t.partition === tab.partition).map((t) => preparePageClock(t)));
     if (reload) reloadTab(tab);
   } catch (error) {
     tab.error = `Proxy switch failed: ${error.message}`;
@@ -1884,11 +1874,27 @@ async function clearCookiesOnTabs(tabIds) {
   if (!Array.isArray(tabIds) || tabIds.length === 0) return 0;
   const targets = tabIds.map((id) => tabs.find((t) => t.id === id)).filter(Boolean);
   if (targets.length === 0) return 0;
+  // Bulk cookie-wipe signs out every selected account, so confirm first — the same guard the
+  // single-tab Clear has. Returns null (not 0) on cancel so the caller skips its "cleared" notice.
+  if (win) {
+    const plural = targets.length === 1 ? '' : 's';
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: [`Clear ${targets.length} tab${plural}`, 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Clear cookies and saved logins on ${targets.length} tab${plural}?`,
+      detail: 'Deletes the cookies, site storage, cache and saved logins for every selected tab — and any other tab sharing the same account — then reloads them. Those accounts get signed out.',
+    });
+    if (response !== 0) return null;
+  }
   const seenPartition = new Set();
+  const failedPartitions = new Set();
   for (const t of targets) {
     if (seenPartition.has(t.partition)) continue;
     seenPartition.add(t.partition);
-    try { stopTab(t); await wipeSession(t.view.webContents.session); } catch {}
+    try { stopTab(t); await wipeSession(t.view.webContents.session); }
+    catch { failedPartitions.add(t.partition); }
   }
   for (const t of targets) {
     const contents = t.view?.webContents;
@@ -1899,7 +1905,15 @@ async function clearCookiesOnTabs(tabIds) {
     } catch {}
   }
   sendState();
-  return targets.length;
+  // Report truthfully: a swallowed wipe failure used to still say "Cleared N" while the account was
+  // still signed in. Notify here (not the caller) so the partial-failure wording isn't overwritten.
+  const cleared = targets.filter((t) => !failedPartitions.has(t.partition)).length;
+  if (failedPartitions.size > 0) {
+    notify(`Cleared cookies on ${cleared} tab${cleared === 1 ? '' : 's'}; ${failedPartitions.size} session${failedPartitions.size === 1 ? '' : 's'} could not be cleared and may still be signed in.`);
+  } else {
+    notify(`Cleared cookies on ${cleared} tab${cleared === 1 ? '' : 's'}.`);
+  }
+  return cleared;
 }
 
 /** Wipes a tab's session cookies/storage and reloads. If the tab belongs to a profile every other
@@ -1954,13 +1968,16 @@ async function confirmHardReset() {
   if (mode !== 'browser' || !win) return;
   const tab = selectedTab();
   if (!tab) return;
+  const shared = tabs.filter((t) => t !== tab && t.partition === tab.partition).length;
   const { response } = await dialog.showMessageBox(win, {
     type: 'warning',
     buttons: ['Clear this tab', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
     message: 'Clear this tab’s cookies and switch its IP?',
-    detail: 'Deletes the cookies, site storage, cache and saved logins used by this tab, assigns a new IP from the pool, and reloads the page. Other tabs and other accounts aren’t touched.',
+    detail: shared > 0
+      ? `This account is open in ${shared + 1} tabs that share one login and IP, so all of them are signed out, moved to a new IP from the pool, and reloaded. Other accounts aren’t touched.`
+      : 'Deletes the cookies, site storage, cache and saved logins used by this tab, assigns a new IP from the pool, and reloads the page. Other tabs and other accounts aren’t touched.',
   });
   if (response === 0) await clearThisTab(tab);
 }
@@ -1992,6 +2009,11 @@ async function clearThisTab(tab) {
   // Always navigate to home at the end — covers the non-perTab-proxies case and reasserts if
   // burnIP's load raced the wipe.
   tab.view.webContents.loadURL(home).catch(() => {});
+  // The wipe/burn above hit the whole profile partition, so every other tab on this account was
+  // signed out and moved to the new IP too — reload them so they don't show stale "logged in" pages.
+  for (const other of tabs) {
+    if (other !== tab && other.partition === tab.partition) reloadTab(other);
+  }
 }
 
 /** Spreads the chosen profiles over all tabs in order; `repeat` cycles them until every tab has one. */
@@ -2921,8 +2943,7 @@ function showTabMenu(tab, multi) {
     { label: `${bulkTabs.length} tabs selected`, enabled: false },
     { label: `Group ${bulkTabs.length} tabs…`, click: () => createGroup({ tabIds: bulkIds, name: 'Group' }) },
     { label: `Clear cookies on ${bulkTabs.length}`, click: async () => {
-      const n = await clearCookiesOnTabs(bulkIds);
-      notify(`Cleared cookies on ${n} tab${n === 1 ? '' : 's'}.`);
+      await clearCookiesOnTabs(bulkIds); // notifies its own result (incl. partial failures)
     } },
     { label: `Burn IP on ${bulkTabs.length}`, enabled: can, click: () => bulkTabs.forEach((t) => burnIP(t)) },
     { label: `Clear & New IP on ${bulkTabs.length}`, click: () => bulkTabs.forEach((t) => clearThisTab(t)) },
@@ -3062,6 +3083,7 @@ function snapshot() {
         // For account tabs: 'account' | 'backup' | 'pinned' | 'direct', plus "backup n of m".
         proxyKind: profileSessionFor(tab.partition)?.proxyInfo?.kind ?? null,
         timezone: tab.timezone ?? null,
+        pageZone: tab.pageZone ?? null,
         region: tab.region,
         error: tab.error,
         color: tab.color,
@@ -3151,8 +3173,7 @@ const commands = {
     : setProfile(tab, arg)),
   clearProfileCookies: (tab) => clearProfileCookies(tab),
   clearCookiesOn: async (_tab, ids) => {
-    const n = await clearCookiesOnTabs(Array.isArray(ids) ? ids : []);
-    notify(`Cleared cookies on ${n} tab${n === 1 ? '' : 's'}.`);
+    await clearCookiesOnTabs(Array.isArray(ids) ? ids : []); // notifies its own result
   },
   openSignIn: (tab) => openSignInPage(tab),
   autofill: (tab, cardIndex) => autofill(tab, cardIndex),
@@ -3187,7 +3208,10 @@ function runCommand(name, tabId, arg) {
   const command = commands[name];
   if (!command || mode !== 'browser') return;
   if (TABLESS.has(name)) return command(null, arg);
-  const tab = tabs.find((t) => t.id === tabId) ?? selectedTab();
+  // A tabId that's given but no longer exists must NOT fall back to the selected tab — a stale id on
+  // a destructive command (closeTab, clearProfileCookies, burn…) would hit an unrelated account.
+  // Only an omitted id means "the selected tab".
+  const tab = tabId == null ? selectedTab() : tabs.find((t) => t.id === tabId);
   if (tab) return command(tab, arg);
 }
 
@@ -3258,8 +3282,14 @@ async function scanProxyPool() {
   }
   if (unpinnedCount > 0) saveProfiles();
 
-  notify(`Removed ${flaggedKeys.size} flagged proxies. ${original.length - flaggedKeys.size} remain.`);
-  return { total: original.length, removed: flaggedKeys.size, unpinned: unpinnedCount, results };
+  // Open tabs currently on a flagged IP keep browsing on it until burned — warn rather than auto-burn,
+  // which would interrupt a checkout mid-flow.
+  const stillOnFlagged = tabs.filter((t) => t.proxy && flaggedKeys.has(proxyKey(t.proxy))).length;
+  const warn = stillOnFlagged > 0
+    ? ` ${stillOnFlagged} open tab${stillOnFlagged === 1 ? ' is' : 's are'} still on a removed IP — use Clear & New IP on them.`
+    : '';
+  notify(`Removed ${flaggedKeys.size} flagged proxies. ${original.length - flaggedKeys.size} remain.${warn}`);
+  return { total: original.length, removed: flaggedKeys.size, unpinned: unpinnedCount, stillOnFlagged, results };
 }
 
 /**
@@ -3612,7 +3642,9 @@ function updateMenu() {
           accelerator: `CmdOrCtrl+Shift+${n}`,
           enabled: inBrowser,
           visible: false,
-          click: () => { const t = tabs.find((x) => x.slot === n); if (t) selectTab(t.id); },
+          // Jump by visible position (Chrome-like: 1-8 = that tab, 9 = last). Slots are monotonic and
+          // never reused, so matching on slot broke the moment any early tab was closed.
+          click: () => { const t = n === 9 ? tabs[tabs.length - 1] : tabs[n - 1]; if (t) selectTab(t.id); },
         })),
         {
           label: 'Reopen Last Closed Tab',
@@ -3901,14 +3933,13 @@ app.whenReady().then(async () => {
     }
   }, 6 * 60 * 60 * 1000).unref?.();
 
-  // macOS / Linux: start in the timezone of the last session's proxies (it only applies from a start).
-  if (!CLOCK_LOG && process.platform !== 'win32' && !settings.pendingLaunch && settings.matchProxyTimezone
-    && settings.clockZone && process.env.TZ !== settings.clockZone) {
-    restartWithClock(settings.clockZone);
-    return;
+  // Older builds set one computer-wide timezone (and restarted into it). Put that back: each tab now
+  // follows its own proxy inside the page, so this computer's clock is left alone.
+  if (settings.clockZone) {
+    settings.clockZone = null;
+    persistSettings();
   }
-  if (process.platform !== 'win32') clockZone = settings.matchProxyTimezone && process.env.TZ ? process.env.TZ : null;
-  // Windows: a timezone left set by a TabSolo that didn't quit normally goes back first.
+  clockZone = null;
   await restoreWindowsClock();
   await Promise.all([loadProfiles(), loadSyncCredentials()]);
   // Only with the accounts loaded: an unreadable profiles file must never look like "no accounts".
@@ -3917,7 +3948,8 @@ app.whenReady().then(async () => {
   startupDone = true;
   startAutoUpdater();
   ensureActiveGroup();
-  if (settings.autoOpenOrders) startOrderWatcher();
+  // The order watcher starts with a browsing session (see startSession), not here — on the launcher
+  // there's no pool yet, so opening a tab would throw and the order would retry-loop forever.
   // Restarted to set the clock: continue the launch the user started.
   if (settings.pendingLaunch) {
     settings.pendingLaunch = false;
@@ -3983,7 +4015,7 @@ function saveSettings(input) {
   writeData('settings.json', settings);
   if (typeof input?.matchProxyTimezone === 'boolean') clockSettingChanged();
   if (typeof input?.autoOpenOrders === 'boolean') {
-    if (settings.autoOpenOrders) startOrderWatcher();
+    if (settings.autoOpenOrders && mode === 'browser') startOrderWatcher();
     else stopOrderWatcher();
   }
   if (autoUpdater) {
@@ -4096,7 +4128,8 @@ function startAutoUpdater() {
 }
 
 app.on('window-all-closed', () => {
-  endSession();
+  // Keep the saved tabs so the next launch (or macOS dock reactivate) can still offer to restore them.
+  endSession({ keepSnapshot: true });
   if (process.platform !== 'darwin') app.quit();
 });
 

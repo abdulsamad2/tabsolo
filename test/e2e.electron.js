@@ -459,8 +459,10 @@ app.whenReady().then(async () => {
     await waitFor(() => ui(`document.querySelectorAll('#profile-results li[data-id]').length === 1`), 'bravo in picker');
     await ui(`document.querySelector('#profile-results li[data-id]').click()`);
     await waitFor(() => ui(`document.querySelectorAll('.tab').length === ${tabsBefore + 1}`), 'search tab opened');
-    assert.match(await ui(`document.querySelector('.tab[aria-selected="true"]').title`), /Profile: Bravo/, 'search tab uses the picked profile');
-    results.searchTab = await waitFor(() => ui(`(() => { const t = document.querySelector('.tab[aria-selected="true"]'); return t && t.title.split('\\n')[1]; })()`), 'search tab url');
+    // The per-tab hover tooltip was removed; the selected tab's profile now shows in the picker label
+    // and its URL in the address bar (see app.js renderProfilePanel / the #address binding).
+    await waitFor(() => ui(`document.querySelector('.picker-label').textContent === 'Bravo'`), 'search tab uses the picked profile');
+    results.searchTab = await waitFor(() => ui(`document.querySelector('#address').value`), 'search tab url');
     assert.equal(results.searchTab, 'https://www.ticketmaster.com/search?q=Lakers+vs+Celtics&startDate=2026-12-01&endDate=2026-12-01');
     results.searchNote = await waitFor(() => ui(`document.querySelector('#note').value`), 'order details in the tab note');
     assert.equal(results.searchNote, 'Lakers vs Celtics\nVenue: Crypto.com Arena\nDate: 2026-12-01 7:30 PM\nSec 112 · Row F · Qty 2\nOrder #700000001 (viagogo)');
@@ -473,9 +475,10 @@ app.whenReady().then(async () => {
     await ui(`document.querySelector('[data-cmd="home"]').click()`);
     await waitFor(() => ui(`document.querySelector('#address').value === 'http://fleet-e2e.example/'`), 'home goes to the start page');
 
-    // A new tab starts without a profile, so the picker opens for the user to choose one.
+    // A no-preference new tab (shift+click +) starts without a profile, so the picker opens for the
+    // user to choose one. (Plain + now smart-assigns a free profile; see newTab in main.js.)
     await ui(`(() => { const s = document.querySelector('#profile-search'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
-    await run('newTab');
+    await run('newTab', { smart: false });
     await waitFor(() => ui(`!document.querySelector('#profile-picker-menu').hidden && !document.querySelector('#profile-empty').hidden`), 'picker opens on a new tab');
     fs.writeFileSync(path.join(outDir, 'new-tab-picker.png'), (await win.webContents.capturePage()).toPNG());
 
@@ -498,23 +501,23 @@ app.whenReady().then(async () => {
     assert.ok(deltaUser?.startsWith('u-us-') && deltaUser !== alphaUser && homeHits.every((r) => r.user === deltaUser),
       `homepage only through Delta's pinned pool proxy: ${JSON.stringify(homeHits)}`);
 
-    // The clock: set at Launch to where most proxies are (the pool's are in Chicago), with nothing
-    // attached to the tabs; the panel shows each tab's proxy timezone.
-    const clockLog = () => fs.readFileSync(process.env.TABSOLO_CLOCK_LOG, 'utf8').split('\n').filter((l, i, a) => i < a.length - 1);
-    assert.deepEqual(clockLog(), ['America/Chicago'], 'the clock was set once, at Launch, before the tabs opened');
-    assert.ok(webContents.getAllWebContents().every((wc) => !wc.debugger.isAttached()), 'no DevTools connection on any tab');
+    // The clock: each page follows its own proxy, not this computer's timezone and not one zone shared
+    // by every tab. The panel shows the looked-up zone and stays quiet when the page clock matches it.
+    const computerZone = await win.webContents.executeJavaScript('Intl.DateTimeFormat().resolvedOptions().timeZone');
     const zonePage = await waitFor(() => pageViews().find((v) => v.getVisible())?.webContents, 'visible page');
-    assert.equal(await zonePage.executeJavaScript('window.firstZone'), Intl.DateTimeFormat().resolvedOptions().timeZone, 'the page sees the process clock, untouched');
+    assert.equal(await zonePage.executeJavaScript('window.firstZone'), 'America/Chicago', 'the page clock follows the proxy, not this computer');
     await waitFor(() => ui(`[...document.querySelectorAll('#profile-details .pd-row')].some((r) => r.textContent.includes('Timezone') && r.querySelector('input').value === 'America/Chicago')`), "Delta's proxy timezone in the panel");
-    assert.equal(await ui(`Boolean(document.querySelector('#profile-details .pd-warning'))`), false, 'same as the clock: no warning');
+    assert.equal(await ui(`Boolean(document.querySelector('#profile-details .pd-warning'))`), false, 'page clock matches the proxy: no warning');
     assert.ok(tzLookups.includes(deltaUser), "looked up through the tab's own proxy");
     const lookupsBefore = tzLookups.length;
     await run('reload');
     await waitFor(() => !zonePage.isLoading(), 'reloaded');
     assert.equal(tzLookups.length, lookupsBefore, 'cached per proxy');
+    assert.equal(await zonePage.executeJavaScript('Intl.DateTimeFormat().resolvedOptions().timeZone'), 'America/Chicago', 'reload keeps the proxy clock');
     await ui(`window.fleet.saveSettings({ matchProxyTimezone: false })`);
-    assert.deepEqual(clockLog(), ['America/Chicago', ''], 'turning it off puts the computer clock back');
+    await waitFor(() => zonePage.executeJavaScript(`Intl.DateTimeFormat().resolvedOptions().timeZone === ${JSON.stringify(computerZone)}`), "turning it off uses this computer's clock");
     await ui(`window.fleet.saveSettings({ matchProxyTimezone: true })`);
+    await waitFor(() => zonePage.executeJavaScript(`Intl.DateTimeFormat().resolvedOptions().timeZone === 'America/Chicago'`), 'turning it on follows the proxy again');
 
     // Fill & next fills the form and presses its Continue button.
     await run('navigate', 'http://fleet-e2e.example/signin');

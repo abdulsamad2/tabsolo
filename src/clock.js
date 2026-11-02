@@ -1,7 +1,7 @@
 'use strict';
 
-// The clock pages see is the clock of the computer they run on: TabSolo sets that clock's timezone to
-// where the proxies are (see main.js "Clock"), rather than altering anything inside the browser.
+// Windows timezone ids, used only to put back a computer timezone an older TabSolo build changed.
+// Page clocks follow each proxy inside the browser now (see main.js "Clock") and do not use this.
 
 // IANA timezone → Windows timezone id (from CLDR's windowsZones), for `tzutil /s`.
 const WINDOWS_ZONES = {

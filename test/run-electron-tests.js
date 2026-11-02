@@ -10,7 +10,8 @@ const electron = require('electron'); // the binary path when required from Node
 // VS Code terminals set this, which would make Electron run as plain Node.
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
-// Tests record the clock TabSolo would set instead of changing the computer's timezone or restarting.
+// Tests record a computer-timezone change if one is attempted, instead of changing it or restarting.
+// Page clocks follow each proxy and do not need that change.
 env.TABSOLO_CLOCK_LOG = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tabsolo-clock-')), 'clock.log');
 // Dev-only bypass: skips the license gate so the real main.js runs without hitting the Workers API.
 env.TABSOLO_SKIP_LICENSE = '1';

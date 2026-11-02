@@ -1,8 +1,8 @@
 'use strict';
 
-// `npm start`: runs TabSolo attached to this terminal. When TabSolo restarts itself to set the clock
-// to the proxies' timezone (macOS / Linux), it asks this script to do it, so the app stays attached
-// here instead of the terminal returning while a detached copy runs.
+// `npm start`: runs TabSolo attached to this terminal. If TabSolo asks to be started again (exit code
+// 75 and a restart file), this script does it, so the app stays attached here instead of the terminal
+// returning while a detached copy runs.
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');

@@ -101,9 +101,12 @@ if (proxyCheckBtn) {
         return;
       }
       textarea.value = result.cleanedText;
+      const remaining = result.total - result.removed;
       proxyCheckStatus.textContent = result.removed === 0
         ? `All ${result.total} proxies passed.`
-        : `Removed ${result.removed} of ${result.total}; ${result.total - result.removed} remain.`;
+        : remaining === 0
+          ? `⚠ All ${result.total} failed and were removed — no usable proxies left. Add working proxies before launching.`
+          : `Removed ${result.removed} of ${result.total}; ${remaining} remain.`;
     } catch (error) {
       proxyCheckStatus.textContent = `Check failed: ${error?.message || 'unknown error'}`;
     } finally {
@@ -123,6 +126,9 @@ form.addEventListener('submit', async (event) => {
   button.disabled = true;
   try {
     showLaunchError(await window.fleet.launch(readForm()));
+  } catch (error) {
+    // A rejected launch() used to vanish as an unhandled rejection with no visible feedback.
+    showLaunchError(error?.message || 'Launch failed. Check the logs and try again.');
   } finally {
     button.disabled = false;
   }
@@ -490,7 +496,7 @@ $('#snippet-form').addEventListener('submit', async (event) => {
 
 // ---------- Profiles ----------
 
-function showNotice(text) {
+function showNotice(text, timeout) {
   const notice = $('#notice');
   notice.textContent = text;
   notice.hidden = !text;
@@ -498,8 +504,10 @@ function showNotice(text) {
   const multiline = typeof text === 'string' && text.includes('\n');
   notice.style.whiteSpace = multiline ? 'pre-wrap' : '';
   clearTimeout(showNotice.timer);
-  const timeout = multiline ? 30000 : 5000;
-  if (text) showNotice.timer = setTimeout(() => { notice.hidden = true; notice.style.whiteSpace = ''; }, timeout);
+  // Honour an explicit duration — error/action toasts (playbook, bulk, license) pass a longer time
+  // and used to be dropped at the default 5s.
+  const ms = timeout ?? (multiline ? 30000 : 5000);
+  if (text) showNotice.timer = setTimeout(() => { notice.hidden = true; notice.style.whiteSpace = ''; }, ms);
 }
 
 function describeImport(result) {
@@ -520,6 +528,8 @@ async function refreshProfiles() {
   profiles = await window.fleet.listProfiles();
   for (const id of [...checkedProfiles]) if (!profiles.some((p) => p.id === id)) checkedProfiles.delete(id);
   render();
+  // Keep the bulk-assign checklist current when a profile is imported/deleted while it's open.
+  if ($('#profile-section')?.dataset.mode === 'bulk') renderBulkList();
 }
 
 // A small palette for auto-generated profile avatars. Chosen for decent contrast against light + dark surfaces.
@@ -596,6 +606,9 @@ function iconButton(text, action, title, data = {}) {
   const button = Object.assign(document.createElement('button'), { type: 'button', className: 'pd-btn', textContent: text, title });
   button.dataset.action = action;
   Object.assign(button.dataset, data);
+  // A glyph like ⧉ or × gives a screen reader no readable name, so fall back to the title: it then
+  // announces "Copy Password" instead of the symbol. Buttons whose text is real words keep it.
+  if (title && !/[a-z0-9]/i.test(text)) button.setAttribute('aria-label', title);
   return button;
 }
 
@@ -611,6 +624,7 @@ function detailRow(label, value, { copy = value, masked = false, extra = [] } = 
     type: masked ? 'password' : 'text', readOnly: true, value: value ?? '', tabIndex: -1,
   });
   field.className = 'pd-value';
+  field.setAttribute('aria-label', label); // the pd-label span isn't programmatically tied to the field
   const buttons = document.createElement('span');
   buttons.className = 'pd-buttons';
   if (copy && typeof copy === 'object') buttons.append(iconButton('⧉', 'copy-secret', `Copy ${label}`, { field: copy.secret, label }));
@@ -629,7 +643,7 @@ function renderProfileDetails(profile, tab) {
   const details = $('#profile-details');
   const empty = $('#profile-empty');
   // Rebuild only when something shown here changed, not on every page event.
-  const key = JSON.stringify([profile, tab.slot, tab.proxyParts, tab.proxyKind, tab.timezone, state.clockZone, otpCodes.get(profile?.id), profile ? 0 : profiles.length]);
+  const key = JSON.stringify([profile, tab.slot, tab.proxyParts, tab.proxyKind, tab.timezone, tab.pageZone, otpCodes.get(profile?.id), profile ? 0 : profiles.length]);
   if (details.dataset.key === key) return;
   details.dataset.key = key;
   details.hidden = !profile;
@@ -674,9 +688,10 @@ function renderProfileDetails(profile, tab) {
   // Primary actions.
   const actions = document.createElement('div');
   actions.className = 'pd-actions';
-  const fill = Object.assign(iconButton('Autofill', 'autofill', 'Fill the form on this page (Ctrl/⌘ Shift F). Nothing is submitted.'), { id: 'autofill', className: 'primary-soft' });
-  const next = Object.assign(iconButton('Fill & next ▸', 'autofill-submit', "Fill the form, then click the page's Continue/Save/Login button (Ctrl/⌘ Shift Enter)"), { id: 'autofill-submit', className: '' });
-  actions.append(fill, next);
+  // One fill button: fills the form AND clicks the page's Continue/Save/Login button. Fill-only
+  // (review before submitting) stays on the Ctrl/⌘ Shift F shortcut.
+  const fill = Object.assign(iconButton('Autofill', 'autofill-submit', "Fill the form and click the page's Continue/Save/Login button (Ctrl/⌘ Shift Enter). Ctrl/⌘ Shift F fills without submitting."), { id: 'autofill', className: 'primary-soft' });
+  actions.append(fill);
   if (profile.url) {
     actions.append(Object.assign(iconButton('Auto login', 'auto-login', `Open ${profile.url}, fill the login form and sign in`), { className: '' }));
   }
@@ -752,12 +767,12 @@ function renderProfileDetails(profile, tab) {
     if (proxy.hasPassword) details.append(detailRow('Password', '••••••••', { copy: { secret: 'proxyPassword' }, masked: true }));
     if (tab.timezone) {
       details.append(detailRow('Timezone', tab.timezone, { copy: '' }));
-      if (tab.timezone !== state.clockZone) {
+      if (tab.pageZone !== tab.timezone) {
         details.append(Object.assign(document.createElement('p'), {
           className: 'pd-notes pd-warning',
-          textContent: state.clockZone
-            ? `⚠ This proxy is in ${tab.timezone}, but the clock is set to ${state.clockZone} (where most of your proxies are).`
-            : `⚠ This proxy is in ${tab.timezone}, but the clock is this computer's. Turn on "Set the clock to the proxies' timezone" in Settings.`,
+          textContent: tab.pageZone
+            ? `⚠ This proxy is in ${tab.timezone}, but this tab's clock is ${tab.pageZone}. Reload the tab.`
+            : `⚠ This proxy is in ${tab.timezone}, but this tab is still using this computer's clock. Turn on "Set the clock to the proxies' timezone" in Settings.`,
         }));
       }
     }
@@ -792,6 +807,8 @@ const activeProfiles = () => (state.activeGroup === null ? [] : profiles.filter(
 
 function renderPickerList(tab = selectedTab()) {
   if (!tab) return;
+  // The list is about to be rebuilt, so the keyboard cursor resets.
+  $('#profile-search').removeAttribute('aria-activedescendant');
   const active = activeGroupInfo();
   const head = $('#picker-group-head');
   head.hidden = !state.groups?.length || (state.groups.length < 2 && Boolean(active));
@@ -809,7 +826,8 @@ function renderPickerList(tab = selectedTab()) {
     $('#profile-results').replaceChildren(choose);
     return;
   }
-  const matches = searchProfiles($('#profile-search').value).filter((p) => groupOf(p) === state.activeGroup).slice(0, 200);
+  const allMatches = searchProfiles($('#profile-search').value).filter((p) => groupOf(p) === state.activeGroup);
+  const matches = allMatches.slice(0, 200);
   const slotsByProfile = new Map();
   for (const t of state.tabs) {
     if (!t.profileId) continue;
@@ -820,6 +838,9 @@ function renderPickerList(tab = selectedTab()) {
     const slots = slotsByProfile.get(p.id) ?? [];
     const item = document.createElement('li');
     item.dataset.id = p.id;
+    item.id = `po-${p.id}`;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(p.id === tab.profileId));
     item.classList.toggle('active', p.id === tab.profileId);
     const text = document.createElement('div');
     text.className = 'label';
@@ -831,6 +852,9 @@ function renderPickerList(tab = selectedTab()) {
       const dot = document.createElement('span');
       dot.className = `health-dot health-${health.status}`;
       dot.title = `Health: ${health.status} — ${health.reason || 'click Check All to refresh'}`;
+      // Status is shown by colour (green/red/grey); give it a text alternative so it's not colour-only.
+      dot.setAttribute('role', 'img');
+      dot.setAttribute('aria-label', `Login status: ${health.status}`);
       name.prepend(dot);
     }
     if (slots.length > 0) {
@@ -847,6 +871,12 @@ function renderPickerList(tab = selectedTab()) {
     $('#profile-results').replaceChildren(Object.assign(document.createElement('li'), {
       className: 'hint',
       textContent: profiles.length ? `No accounts in ${active?.name ?? 'this group'} match.` : 'No profiles yet. Use ⋯ → Import CSV.',
+    }));
+  } else if (allMatches.length > matches.length) {
+    // The list is capped at 200; tell the user the rest are reachable by searching.
+    $('#profile-results').append(Object.assign(document.createElement('li'), {
+      className: 'hint',
+      textContent: `+${allMatches.length - matches.length} more — type to narrow the list.`,
     }));
   }
 }
@@ -941,7 +971,9 @@ profileMenu.addEventListener('click', async (event) => {
       address1: profile.address1, address2: profile.address2, city: profile.city, state: profile.state,
       zip: profile.zip, country: profile.country, url: profile.url, favorite: profile.favorite, notes: profile.notes,
     });
-    showNotice(`Duplicated ${profile.profile}.`);
+    // Secrets (password, cards, resolvers, OTP keys) can't be read in the renderer, so the copy has
+    // none — say so rather than letting the user think it can log in.
+    showNotice(`Duplicated ${profile.profile}. Re-enter its password, cards and OTP keys — secrets aren't copied.`);
   } else if (action === 'delete' && confirm(`Delete profile "${profile.profile}"? Its logins and site data are deleted too.`)) {
     await window.fleet.deleteProfiles([profile.id]);
     showNotice(`Deleted ${profile.profile}.`);
@@ -966,10 +998,19 @@ document.addEventListener('keydown', (event) => {
     setModal('#shortcuts-sheet', true);
   }
   if (event.key === 'Escape') {
+    // Mid-rebind, Esc cancels the key capture (handled on the shortcuts list), not the whole sheet.
+    if (capturing) return;
     const open = MODALS.find((selector) => !$(selector).hidden);
     if (open) {
       event.preventDefault();
       setModal(open, false);
+    } else {
+      // No modal open: Esc also backs out of the profile editor / sheet-import / bulk-assign panels,
+      // which are the expected cancel key for those forms.
+      const mode = $('#profile-section')?.dataset.mode;
+      if (mode === 'editor') { event.preventDefault(); closeEditor(); }
+      else if (mode === 'sheet') { event.preventDefault(); closeSheetForm(); }
+      else if (mode === 'bulk') { event.preventDefault(); closeBulkAssign(); }
     }
   }
 });
@@ -977,9 +1018,22 @@ document.addEventListener('keydown', (event) => {
 
 // Tab pages are drawn above this window's UI, so main hides the page while any dialog is open.
 const MODALS = ['#shortcuts-sheet', '#settings-sheet', '#orders-sheet', '#group-sheet', '#seat-test-sheet', '#palette', '#playbooks-sheet', '#recording-review-sheet'];
+let modalOpener = null;
 function setModal(selector, open) {
-  $(selector).hidden = !open;
+  const el = $(selector);
+  if (open && el.hidden) modalOpener = document.activeElement;
+  el.hidden = !open;
   window.fleet.setOverlay(MODALS.some((s) => !$(s).hidden));
+  // Move focus into the dialog on open (the page behind is hidden, so a stranded focus is a dead
+  // keyboard), and hand it back to whatever opened it on close. A caller that wants a specific
+  // field focused still runs after this and wins.
+  if (open) {
+    const focusable = el.querySelector('input:not([disabled]), button:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])');
+    (focusable || el).focus?.();
+  } else if (typeof modalOpener?.focus === 'function') {
+    modalOpener.focus();
+    modalOpener = null;
+  }
 }
 $('#shortcuts-close').addEventListener('click', () => setModal('#shortcuts-sheet', false));
 $('#help-btn').addEventListener('click', openShortcutsSheet);
@@ -1549,7 +1603,13 @@ $('#license-deactivate').addEventListener('click', async () => {
 $('#settings-check').addEventListener('click', async () => {
   updateInfo = { ...updateInfo, status: { kind: 'checking', manual: true } };
   renderUpdates();
-  updateInfo = await window.fleet.checkForUpdate();
+  try {
+    updateInfo = await window.fleet.checkForUpdate();
+  } catch {
+    // Don't leave the button stuck on "Checking…" and disabled if the call rejects.
+    updateInfo = { ...updateInfo, status: { kind: 'idle' } };
+    showNotice('Update check failed. Check your connection and try again.', 6000);
+  }
   renderUpdates();
 });
 const downloadUpdate = async () => {
@@ -1802,7 +1862,13 @@ function renderOrders() {
       empty.append(open);
     }
   } else if (loading && orders.length === 0) empty.textContent = 'Loading orders…';
-  else if (!loading && orders.length === 0) empty.textContent = 'No invoiced orders right now.';
+  else if (!loading && orders.length === 0) {
+    // Distinguish "nothing fetched" from "nothing under the current filter" — the latter read like
+    // the fetch came back empty.
+    empty.textContent = orderState.orders.length > 0
+      ? 'No orders in this view — try another filter.'
+      : 'No invoiced orders right now.';
+  }
   $('#orders-table').classList.toggle('loading', loading);
   $('#orders-refresh').disabled = loading;
   $('#orders-loadbar').hidden = !loading;
@@ -1946,9 +2012,11 @@ document.querySelector('#orders-sheet').addEventListener('click', async (event) 
     event.stopPropagation();
     const current = orderState.orders.find((o) => String(o.id) === toggleId)?.localStatus ?? 'new';
     const next = current === 'new' ? 'working' : current === 'working' ? 'handled' : 'new';
-    await window.fleet.setOrderStatus(toggleId, next);
-    const o = orderState.orders.find((o) => String(o.id) === toggleId);
-    if (o) o.localStatus = next;
+    try {
+      await window.fleet.setOrderStatus(toggleId, next);
+      const o = orderState.orders.find((o) => String(o.id) === toggleId);
+      if (o) o.localStatus = next; // only after it persisted
+    } catch { showNotice('Could not update the order status.'); }
     renderOrders();
     return;
   }
@@ -1958,8 +2026,10 @@ document.querySelector('#orders-sheet').addEventListener('click', async (event) 
     event.stopPropagation();
     const o = orderState.orders.find((o) => String(o.id) === handledId);
     const next = o?.localStatus === 'handled' ? 'new' : 'handled';
-    await window.fleet.setOrderStatus(handledId, next);
-    if (o) o.localStatus = next;
+    try {
+      await window.fleet.setOrderStatus(handledId, next);
+      if (o) o.localStatus = next; // only after it persisted
+    } catch { showNotice('Could not update the order status.'); }
     renderOrders();
     return;
   }
@@ -2175,15 +2245,31 @@ function togglePicker(force) {
   }
   $('#picker-search-context').hidden = !pendingSearch;
   pickerBtn.setAttribute('aria-expanded', String(open));
+  $('#profile-search').setAttribute('aria-expanded', String(open));
+  if (!open) $('#profile-search').removeAttribute('aria-activedescendant');
   if (open) {
     renderPickerList();
     $('#profile-search').focus();
     $('#profile-search').select();
   }
 }
-pickerBtn.addEventListener('click', () => togglePicker());
+pickerBtn.addEventListener('click', () => {
+  // Opening the picker by hand is a profile assignment, not a continuation of an abandoned order
+  // search — drop any stale pendingSearch so clicking a profile assigns it instead of re-searching.
+  if (pickerMenu.hidden) pendingSearch = null;
+  togglePicker();
+});
 document.addEventListener('click', (event) => {
-  if (!pickerMenu.hidden && !event.target.closest('.profile-picker')) togglePicker(false);
+  if (pickerMenu.hidden || event.target.closest('.profile-picker')) return;
+  // An incidental outside click (e.g. clicking the address bar) just hides the menu. It must NOT
+  // throw away a pending order-search — reopening the picker continues it. Esc / the no-profile
+  // button stay the explicit cancel.
+  if (pendingSearch) {
+    pickerMenu.hidden = true;
+    pickerBtn.setAttribute('aria-expanded', 'false');
+  } else {
+    togglePicker(false);
+  }
 });
 
 /** Keyboard: arrow up/down moves selection in the picker list; Enter picks it; Esc closes. */
@@ -2194,6 +2280,7 @@ function pickerKeyNav(delta) {
   const next = Math.max(0, Math.min(items.length - 1, (current === -1 ? 0 : current + delta)));
   items.forEach((li, i) => li.classList.toggle('kb-focus', i === next));
   items[next].scrollIntoView({ block: 'nearest' });
+  $('#profile-search').setAttribute('aria-activedescendant', items[next].id || ''); // tell AT which option is highlighted
 }
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !pickerMenu.hidden) { event.preventDefault(); togglePicker(false); pickerBtn.focus(); return; }
@@ -2208,6 +2295,7 @@ document.addEventListener('keydown', (event) => {
 // "⋯" manage menu next to the picker: profile import/export, bulk assign, theme, help.
 const manageMenu = $('#manage-menu');
 const manageBtn = $('#manage-menu-btn');
+manageMenu.querySelectorAll('button').forEach((b) => b.setAttribute('role', 'menuitem')); // role=menu needs menuitem children
 function toggleManageMenu(force) {
   const open = force === undefined ? manageMenu.hidden : force;
   manageMenu.hidden = !open;
@@ -2293,6 +2381,8 @@ $('#profile-delete-all').addEventListener('click', async () => {
 const editor = $('#profile-editor');
 // What's being edited: saved cards are referenced by index (the window never has their numbers).
 let editing = null; // { id, savedCards, keepCards: Set<number>, newCards: [] }
+let editorDirty = false; // set by user typing; guards against discarding unsaved edits
+editor.addEventListener('input', () => { editorDirty = true; });
 
 // Which section of the profile UI is in view: the list, the editor, or the Google Sheet form.
 // Hides the siblings via CSS so the panel stays focused on one thing at a time.
@@ -2332,9 +2422,13 @@ function openEditor(profile = null) {
   editor.hidden = false;
   setProfileMode('editor');
   editor.elements.profile.focus();
+  editorDirty = false; // programmatic fills above don't count as edits
 }
 
-function closeEditor() {
+function closeEditor(force = false) {
+  // Don't silently throw away a long card/credential edit on a stray Esc or Cancel click.
+  if (!force && editorDirty && !window.confirm('Discard unsaved changes to this profile?')) return;
+  editorDirty = false;
   editor.reset();
   editing = null;
   editor.hidden = true;
@@ -2427,7 +2521,7 @@ $('#sheet-import-run').addEventListener('click', async () => {
   showNotice(describeImport(result));
   closeSheetForm();
 });
-$('#editor-cancel').addEventListener('click', closeEditor);
+$('#editor-cancel').addEventListener('click', () => closeEditor()); // not `closeEditor` — the event arg would look like force=true
 $('#card-add').addEventListener('click', () => {
   if (takeCardFields()) renderEditorCards();
 });
@@ -2473,14 +2567,14 @@ editor.addEventListener('submit', async (event) => {
     return;
   }
   const created = !editing.id;
-  closeEditor();
+  closeEditor(true);
   showNotice(created ? 'Profile created. Pick it from the Profile menu to put it on this tab.' : 'Profile saved.');
 });
 $('#editor-delete').addEventListener('click', async () => {
   const profile = profiles.find((p) => p.id === editing?.id);
   if (!profile || !confirm(`Delete profile "${profile.profile}"? Its saved logins and site data are deleted too.`)) return;
   await window.fleet.deleteProfiles([profile.id]);
-  closeEditor();
+  closeEditor(true);
   showNotice(`Deleted ${profile.profile}.`);
 });
 
@@ -2536,7 +2630,8 @@ function render() {
 function renderFavoriteProfiles() {
   const strip = $('#fav-profiles');
   if (!strip) return;
-  const favs = (profiles || []).filter((p) => p.favorite && (!state.activeGroup || groupOf(p) === state.activeGroup)).slice(0, 8);
+  const allFavs = (profiles || []).filter((p) => p.favorite && (!state.activeGroup || groupOf(p) === state.activeGroup));
+  const favs = allFavs.slice(0, 8);
   strip.replaceChildren(...favs.map((p) => {
     const chip = document.createElement('button');
     chip.className = 'fav-chip';
@@ -2546,11 +2641,19 @@ function renderFavoriteProfiles() {
     if (p.color) chip.style.background = p.color;
     return chip;
   }));
+  if (allFavs.length > favs.length) {
+    const more = document.createElement('button');
+    more.className = 'fav-chip fav-more';
+    more.textContent = `+${allFavs.length - favs.length}`;
+    more.title = `${allFavs.length - favs.length} more favorites — open the Profile menu`;
+    more.addEventListener('click', () => { setPanelOpen(true); togglePicker(true); });
+    strip.append(more);
+  }
   strip.hidden = favs.length === 0;
 }
 document.addEventListener('click', (event) => {
   const chip = event.target.closest('#fav-profiles .fav-chip');
-  if (!chip) return;
+  if (!chip || !chip.dataset.profileId) return; // skip the "+N more" chip (it opens the picker itself)
   command('newTab', undefined, { smart: false, profileId: chip.dataset.profileId });
 });
 
@@ -2619,10 +2722,12 @@ tabsEl.addEventListener('click', (event) => {
   const el = event.target.closest('.tab');
   if (!el) return;
   if (event.target.closest('.close')) {
-    // Closing a tab inside the multi-set closes the whole set — "cross on one of three selected
-    // tabs" matches browser conventions. A close click on an unselected tab closes only that tab.
-    if (multi.has(el.dataset.id) && multi.size > 1) {
-      command('closeTabs', undefined, [...multi]);
+    // Closing a tab that's part of the active selection closes the WHOLE selection — the same set the
+    // status strip counts as "✓ N selected" and the same tabs that show the selected ring (focused +
+    // multi). A close click on a tab outside the selection closes only that tab.
+    const inSelection = multi.size > 0 && (multi.has(el.dataset.id) || el.dataset.id === state.selectedId);
+    if (inSelection) {
+      command('closeTabs', undefined, selectedTabIds());
       multi.clear();
     } else {
       command('closeTab', el.dataset.id);
@@ -2662,6 +2767,7 @@ tabsEl.addEventListener('pointerdown', (event) => {
   if (event.target.closest('button')) return; // close / profile clicks keep working
   const el = event.target.closest('.tab');
   if (!el) return;
+  suppressNextClick = false; // clear a stale suppression from a drag whose click never landed
   dragState = { id: el.dataset.id, el, startX: event.clientX, moved: false, pointerId: event.pointerId };
   try { el.setPointerCapture(event.pointerId); } catch {}
 });
@@ -2782,6 +2888,7 @@ window.fleet.onPromptWatch?.(({ tabId, current }) => {
 
 // Click an attention-flagged tab to acknowledge and clear the flag.
 tabsEl.addEventListener('click', (event) => {
+  if (suppressNextClick) return; // a just-finished drag isn't an acknowledgement (bubble guard consumes the flag)
   const el = event.target.closest('.tab.attention');
   if (!el) return;
   command('clearAttention', el.dataset.id);
@@ -2916,7 +3023,7 @@ tabsEl.addEventListener('contextmenu', (event) => {
   const chip = event.target.closest('.group-chip');
   if (chip) {
     event.preventDefault();
-    openGroupMenu(chip.dataset.groupId);
+    openGroupMenu(chip.dataset.groupId, event);
     return;
   }
   const el = event.target.closest('.tab');
@@ -2929,37 +3036,75 @@ tabsEl.addEventListener('contextmenu', (event) => {
   command('tabMenu', el.dataset.id, selectedTabIds());
 });
 
-// Group chip menu — rendered in the renderer because it has prompt() for rename, no need for
-// native menus. Options: rename, change color, collapse toggle, ungroup all, close all.
-function openGroupMenu(groupId) {
+// Group chip menu — a popover with Rename, a row of colour swatches, Collapse/Expand, Ungroup and
+// Close. Replaces the old free-text prompt() (type "rename <name>" / "color red"…), which was
+// undiscoverable and typo-prone.
+const GROUP_COLORS = {
+  red: '#e03131', orange: '#f76707', amber: '#f59f00', yellow: '#fcc419',
+  green: '#2f9e44', teal: '#0ca678', cyan: '#1098ad', sky: '#339af0',
+  blue: '#1c7ed6', indigo: '#4263eb', violet: '#7048e8', purple: '#ae3ec9',
+  pink: '#d6336c', brown: '#8d5524',
+};
+let groupMenuEl = null;
+function closeGroupMenu() { groupMenuEl?.remove(); groupMenuEl = null; }
+document.addEventListener('click', (event) => {
+  if (groupMenuEl && !event.target.closest('#__group-menu')) closeGroupMenu();
+});
+function openGroupMenu(groupId, event) {
   const grp = (state.tabGroups || []).find((g) => g.id === groupId);
   if (!grp) return;
-  // Minimal popover — reuses the dialog style of the shortcut capture, kept inline for simplicity.
-  const choice = prompt(
-    `Group "${grp.name}" — type an action:\n` +
-    `  rename <new name>\n` +
-    `  color red | orange | amber | yellow | green | teal | cyan | sky | blue | indigo | violet | purple | pink | brown\n` +
-    `  collapse\n` +
-    `  ungroup\n` +
-    `  close`,
-    ''
-  );
-  if (!choice) return;
-  const [verb, ...rest] = choice.trim().split(/\s+/);
-  const arg = rest.join(' ').trim();
-  const COLOR_MAP = {
-    red: '#e03131', orange: '#f76707', amber: '#f59f00', yellow: '#fcc419',
-    green: '#2f9e44', teal: '#0ca678', cyan: '#1098ad', sky: '#339af0',
-    blue: '#1c7ed6', indigo: '#4263eb', violet: '#7048e8', purple: '#ae3ec9',
-    pink: '#d6336c', brown: '#8d5524',
+  closeGroupMenu();
+  const menu = document.createElement('div');
+  menu.id = '__group-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', `Group ${grp.name}`);
+  menu.style.cssText = 'position:fixed;z-index:1000;min-width:180px;background:var(--panel-bg,#1b1f27);color:var(--text,#e8ecf1);border:1px solid var(--border,#333a46);border-radius:8px;padding:6px;box-shadow:0 12px 34px rgba(0,0,0,.45);font:13px -apple-system,system-ui,sans-serif';
+
+  const item = (label, onClick, danger = false) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.textContent = label;
+    b.style.cssText = `all:unset;display:block;box-sizing:border-box;width:100%;padding:6px 10px;border-radius:5px;cursor:pointer${danger ? ';color:#ff6b6b' : ''}`;
+    b.addEventListener('mouseenter', () => { b.style.background = 'rgba(255,255,255,.08)'; });
+    b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+    b.addEventListener('click', () => { closeGroupMenu(); onClick(); });
+    menu.append(b);
   };
-  if (verb === 'rename' && arg) command('renameGroup', undefined, { id: grp.id, name: arg });
-  else if (verb === 'color' && COLOR_MAP[arg]) command('setGroupColor', undefined, { id: grp.id, color: COLOR_MAP[arg] });
-  else if (verb === 'collapse') command('toggleGroupCollapse', undefined, grp.id);
-  else if (verb === 'ungroup') {
-    for (const t of state.tabs) if (t.groupId === grp.id) command('ungroupTab', t.id);
-  } else if (verb === 'close') command('closeGroup', undefined, grp.id);
-  else showNotice('Unknown action — type rename, color, collapse, ungroup, or close.');
+
+  item('✏ Rename…', () => {
+    const name = prompt('Rename group', grp.name);
+    if (name && name.trim()) command('renameGroup', undefined, { id: grp.id, name: name.trim() });
+  });
+
+  const colors = document.createElement('div');
+  colors.setAttribute('role', 'group');
+  colors.setAttribute('aria-label', 'Group colour');
+  colors.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:6px 10px';
+  for (const [name, hex] of Object.entries(GROUP_COLORS)) {
+    const sw = document.createElement('button');
+    sw.type = 'button';
+    sw.setAttribute('role', 'menuitemradio');
+    sw.setAttribute('aria-checked', String(grp.color === hex));
+    sw.setAttribute('aria-label', `Colour ${name}`);
+    sw.title = `Set colour ${name}`;
+    sw.style.cssText = `all:unset;width:16px;height:16px;border-radius:50%;cursor:pointer;background:${hex};box-shadow:${grp.color === hex ? '0 0 0 2px #fff' : 'none'}`;
+    sw.addEventListener('click', () => { closeGroupMenu(); command('setGroupColor', undefined, { id: grp.id, color: hex }); });
+    colors.append(sw);
+  }
+  menu.append(colors);
+
+  item(grp.collapsed ? '▸ Expand' : '▾ Collapse', () => command('toggleGroupCollapse', undefined, grp.id));
+  item('⤫ Ungroup', () => { for (const t of state.tabs) if (t.groupId === grp.id) command('ungroupTab', t.id); });
+  item('✕ Close all tabs', () => command('closeGroup', undefined, grp.id), true);
+
+  document.body.append(menu);
+  groupMenuEl = menu;
+  // Keep the menu inside the window.
+  const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 8);
+  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 8);
+  menu.style.left = `${Math.max(8, x)}px`;
+  menu.style.top = `${Math.max(8, y)}px`;
 }
 
 $('#new-tab').addEventListener('click', (event) => {
@@ -3122,6 +3267,9 @@ Promise.all([window.fleet.getInitial(), window.fleet.getSnippets(), window.fleet
   renderSwatches();
   renderSnippets();
   fillForm(initial.config);
+  // The Settings-sheet theme (localStorage) is the user's standing choice; re-apply it so it wins
+  // over the launcher config theme fillForm just set — otherwise a theme picked in Settings reverts.
+  try { const t = localStorage.getItem('theme'); if (t) applyTheme(t); } catch {}
   let panelOpen = false;
   try {
     panelOpen = localStorage.getItem('panelOpen') === '1';
@@ -3129,4 +3277,10 @@ Promise.all([window.fleet.getInitial(), window.fleet.getSnippets(), window.fleet
   setPanelOpen(panelOpen);
   state = initial.state;
   render();
+  $('#boot').hidden = true; // initial state is in; drop the startup placeholder
+}).catch((error) => {
+  // Don't leave the spinner turning forever if startup fails — say so.
+  $('#boot')?.querySelector('.boot-spinner')?.remove();
+  const p = $('#boot')?.querySelector('p');
+  if (p) p.textContent = `Couldn't start TabSolo: ${error?.message || 'unknown error'}. Try restarting.`;
 });

@@ -1,7 +1,7 @@
 {
   "name": "tabsolo",
   "productName": "TabSolo",
-  "version": "0.1.0-beta.4",
+  "version": "0.1.0-beta.5",
   "description": "Multi-session browser with a separate session and proxy per tab.",
   "main": "src/main.js",
   "private": true,
@@ -33,7 +33,7 @@
     "mac": {
       "icon": "build/icon.png",
       "category": "public.app-category.productivity",
-      "identity": "-",
+      "identity": "TabSolo Self-Signed",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "target": [
@@ -86,7 +86,7 @@
     ]
   },
   "devDependencies": {
-    "electron": "^45.0.0",
+    "electron": "^45.2.1",
     "electron-builder": "^26.18.0"
   },
   "dependencies": {

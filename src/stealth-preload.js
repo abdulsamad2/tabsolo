@@ -93,6 +93,22 @@ webFrame.executeJavaScript(`
       });
     } catch (_) {}
 
+    // ----- navigator.language / languages -----------------------------------------------------
+    // Every request's Accept-Language is forced to "en-US,en;q=0.9" (see main.js), but Chromium's
+    // --lang=en-US can leave navigator.languages as just ["en-US"]. A header that lists en-US,en
+    // while JS reports only en-US is a header-vs-JS mismatch anti-bot stacks flag, so pin both to
+    // agree. A fresh array each read matches stock Chrome (navigator.languages !== itself).
+    try {
+      Object.defineProperty(Navigator.prototype, 'language', {
+        get: asNative(function () { return 'en-US'; }, 'function get language() { [native code] }'),
+        configurable: true, enumerable: true,
+      });
+      Object.defineProperty(Navigator.prototype, 'languages', {
+        get: asNative(function () { return ['en-US', 'en']; }, 'function get languages() { [native code] }'),
+        configurable: true, enumerable: true,
+      });
+    } catch (_) {}
+
     // ----- window.chrome.* ---------------------------------------------------------------------
     // Stock Chrome on a regular page exposes chrome.app, chrome.csi, chrome.loadTimes, chrome.runtime,
     // and chrome.webstore. The methods are callable but mostly inert without an extension context.
