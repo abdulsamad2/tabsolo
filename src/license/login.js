@@ -38,7 +38,7 @@ form.addEventListener('submit', async (event) => {
 
 buy.addEventListener('click', (event) => {
   event.preventDefault();
-  licenseApi.openExternal('https://tabsolo-site.vercel.app/sign-up');
+  licenseApi.openExternal('https://www.tabsolo.com/sign-up');
 });
 
 function humanize(code) {
