@@ -28,6 +28,18 @@ test('parses TextChest with and without a parser', () => {
   ]);
 });
 
+test('parses the rent-a-number OTP providers (5sim, sms-activate)', () => {
+  assert.deepEqual(parseResolverCell('smscode=5sim:TOKEN:11631253').entries, [
+    { field: 'smscode', resolver: '5sim', args: ['TOKEN', '11631253'] },
+  ]);
+  assert.deepEqual(parseResolverCell('smscode=smsactivate:KEY:987654').entries, [
+    { field: 'smscode', resolver: 'smsactivate', args: ['KEY', '987654'] },
+  ]);
+  assert.deepEqual(parseResolverCell('smscode=sms-activate:KEY:987654').entries, [
+    { field: 'smscode', resolver: 'sms-activate', args: ['KEY', '987654'] },
+  ]);
+});
+
 test('parses Automatiq with and without a SITE-ID', () => {
   assert.deepEqual(parseResolverCell('password=automatiq:TOKEN:42').entries, [
     { field: 'password', resolver: 'automatiq', args: ['TOKEN', '42'] },

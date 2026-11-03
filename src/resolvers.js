@@ -18,7 +18,7 @@ const DEFAULT_PARSER = 'ticketmaster';
 const KNOWN_RESOLVERS = [
   'textchest-async', 'textchest', 'automatiq', 'ticketsuite', 'victorylive1',
   'texttrove', 'seatheroes', 'seatheros', 'smsgateway', 'quick-text', 'lysted',
-  '1ticket', 'wired', 'gmail', 'imap',
+  '1ticket', 'wired', 'gmail', 'imap', 'sms-activate', 'smsactivate', '5sim',
 ].sort((a, b) => b.length - a.length);
 
 /** Parses one `Site:X` cell: `field=name:arg1:arg2, field=$literal, ...`. */
@@ -108,6 +108,8 @@ async function runResolver(entry, profile, tabUrl, opts = {}) {
     if (entry.resolver === 'automatiq') {
       return fetchAutomatiq(entry, profile, tabUrl);
     }
+    if (entry.resolver === '5sim') return fetch5sim(entry, opts);
+    if (entry.resolver === 'smsactivate' || entry.resolver === 'sms-activate') return fetchSmsActivate(entry);
     // Other Jancy resolvers (lysted, 1ticket, texttrove, wired, quick-text, smsgateway,
     // seatheroes, victorylive1, ticketsuite, gmail, imap) are recognised in the schema but have
     // provider-specific APIs; they return a clear "not wired up" error so autofill still runs.
@@ -222,6 +224,67 @@ function pickMessageBody(data) {
     return null;
   };
   return walk(data);
+}
+
+/**
+ * 5sim (5sim.net). You rent a number on 5sim and poll its activation by ORDER-ID — 5sim does not
+ * let you query by phone number, so the resolver takes the order id: `5sim:API_TOKEN:ORDER_ID`.
+ *   GET https://5sim.net/v1/user/check/{orderId}  with  Authorization: Bearer <token>
+ *   → { status, phone, sms: [{ date, sender, text, code }] }  (status PENDING→RECEIVED→FINISHED)
+ */
+async function fetch5sim(entry, opts = {}) {
+  const sinceTs = Number(opts.sinceTs) || 0;
+  const [token, orderId] = entry.args ?? [];
+  if (!token) return { error: '#NO API KEY' };
+  if (!orderId) return { error: '#NO ORDER ID (rent a number on 5sim and use 5sim:TOKEN:ORDER_ID)' };
+  const url = `https://5sim.net/v1/user/check/${encodeURIComponent(orderId)}`;
+  let response;
+  try {
+    response = await electronNet().fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, redirect: 'follow' });
+  } catch (error) { return { error: `#API ERROR (${error.message}) → GET ${url}` }; }
+  if (response.status === 401 || response.status === 403) return { error: `#API ERROR (HTTP ${response.status} — 5sim token not accepted)` };
+  if (!response.ok) return { error: `#API ERROR (HTTP ${response.status} from 5sim.net)` };
+  let data;
+  try { data = JSON.parse((await response.text()).trim()); } catch { return { error: '#API ERROR (non-JSON from 5sim.net)' }; }
+  const list = Array.isArray(data?.sms) ? data.sms : [];
+  if (list.length === 0) return { error: `#NO MSG (5sim order ${orderId} has no SMS yet — status ${data?.status ?? '?'})` };
+  // Newest first by the SMS 'date' (ISO). Skip anything older than the watcher's baseline.
+  const sorted = [...list].sort((a, b) => Date.parse(b?.date ?? 0) - Date.parse(a?.date ?? 0));
+  for (const sms of sorted) {
+    const ts = Date.parse(sms?.date ?? '') || 0;
+    if (sinceTs && ts && ts < sinceTs) continue;
+    const code = String(sms?.code ?? '').trim() || extractCode(null, String(sms?.text ?? ''));
+    if (code) return { value: code, ts };
+  }
+  return { error: sinceTs ? `#NO NEW MSG (no code newer than baseline on 5sim order ${orderId})` : `#NO MSG (no digits in 5sim SMS for order ${orderId})` };
+}
+
+/**
+ * SMS-Activate (sms-activate.org). One PHP endpoint, everything as query params; you rent a number
+ * and poll its ACTIVATION-ID: `smsactivate:API_KEY:ACTIVATION_ID`.
+ *   GET .../handler_api.php?api_key=KEY&action=getStatus&id=ID
+ *   → a bare string: "STATUS_OK:<code>" when the code arrives, else STATUS_WAIT_* / an error word.
+ * getStatus carries no timestamp, so the watcher's sinceTs can't be applied — safe because an
+ * activation id is single-use, so its code can't be a stale one from an earlier login.
+ */
+async function fetchSmsActivate(entry) {
+  const [apiKey, activationId] = entry.args ?? [];
+  if (!apiKey) return { error: '#NO API KEY' };
+  if (!activationId) return { error: '#NO ACTIVATION ID (rent a number on sms-activate and use smsactivate:KEY:ACTIVATION_ID)' };
+  const url = `https://api.sms-activate.org/stubs/handler_api.php?api_key=${encodeURIComponent(apiKey)}&action=getStatus&id=${encodeURIComponent(activationId)}`;
+  let text;
+  try {
+    const response = await electronNet().fetch(url, { headers: { Accept: 'text/plain' }, redirect: 'follow' });
+    if (!response.ok) return { error: `#API ERROR (HTTP ${response.status} from sms-activate.org)` };
+    text = (await response.text()).trim();
+  } catch (error) { return { error: `#API ERROR (${error.message})` }; }
+  if (text.startsWith('STATUS_OK:')) {
+    const code = extractCode(null, text.slice('STATUS_OK:'.length)) || text.slice('STATUS_OK:'.length).trim();
+    return code ? { value: code, ts: 0 } : { error: '#NO MSG (sms-activate returned STATUS_OK with no digits)' };
+  }
+  if (text.startsWith('STATUS_WAIT')) return { error: `#NO MSG (sms-activate ${activationId} waiting for the SMS)` };
+  if (text === 'STATUS_CANCEL') return { error: `#API ERROR (sms-activate activation ${activationId} was cancelled)` };
+  return { error: `#API ERROR (sms-activate: ${text.slice(0, 60)})` }; // BAD_KEY, NO_ACTIVATION, …
 }
 
 /**

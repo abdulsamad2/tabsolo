@@ -2393,6 +2393,18 @@ let editing = null; // { id, savedCards, keepCards: Set<number>, newCards: [] }
 let editorDirty = false; // set by user typing; guards against discarding unsaved edits
 editor.addEventListener('input', () => { editorDirty = true; });
 
+// Provider picker: drop the chosen OTP resolver's format into the resolvers box, then reset.
+editor.querySelector('#otp-provider-picker')?.addEventListener('change', (event) => {
+  const tmpl = event.target.value;
+  if (!tmpl) return;
+  const box = editor.elements.resolversText;
+  const line = `Site:Ticketmaster → ${tmpl}`;
+  box.value = box.value.trim() ? `${box.value.replace(/\s*$/, '')}\n${line}` : line;
+  editorDirty = true;
+  event.target.value = '';
+  box.focus();
+});
+
 // Which section of the profile UI is in view: the list, the editor, or the Google Sheet form.
 // Hides the siblings via CSS so the panel stays focused on one thing at a time.
 function setProfileMode(mode) {

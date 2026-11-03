@@ -244,6 +244,14 @@
             <label class="check" data-when-saved="otpUrl" hidden><input name="clearOtpUrl" type="checkbox"><span>Remove the saved URL</span></label>
             <label>OTP URL authorization<input name="otpAuth" type="password" autocomplete="off" placeholder="Bearer secret-token"></label>
             <label class="check" data-when-saved="otpAuth" hidden><input name="clearOtpAuth" type="checkbox"><span>Remove the saved authorization</span></label>
+            <label>Add an OTP provider<select id="otp-provider-picker">
+              <option value="">Insert a provider's format into the box below…</option>
+              <option value="smscode=textchest:KEY">TextChest — reads your SMS Number</option>
+              <option value="smscode=textchest-async:KEY">TextChest Async — 512-line plans</option>
+              <option value="smscode=5sim:TOKEN:ORDER_ID">5sim — rent a number, poll by order id</option>
+              <option value="smscode=smsactivate:KEY:ACTIVATION_ID">SMS-Activate — rent a number, poll by activation id</option>
+            </select></label>
+            <p class="hint">5sim and SMS-Activate rent you a fresh number — paste the order/activation id from their dashboard. TextChest reads the profile's own SMS Number. Picking one drops its format into the box below; replace the placeholders with your key/id.</p>
             <label>Site-specific resolvers (advanced)<textarea name="resolversText" rows="3" spellcheck="false" placeholder="Site:Ticketmaster → password=automatiq:TOKEN:92, smscode=textchest:KEY"></textarea></label>
             <p class="hint">One site per line. Leave the <code>:KEY</code> part off a resolver (e.g. <code>smscode=textchest</code>) to keep the key you already saved.</p>
           </details>
