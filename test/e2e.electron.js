@@ -540,7 +540,7 @@ app.whenReady().then(async () => {
     await run('closeTab');
 
     // Groups never mix: an account moved to another group is signed out of its tab.
-    await waitFor(() => ui(`/Profile: Delta/.test(document.querySelector('.tab[aria-selected="true"]').title)`), 'delta tab selected');
+    await waitFor(() => ui(`document.querySelector('.picker-label')?.textContent === 'Delta'`), 'delta tab selected');
     const delta = (await ui('window.fleet.listProfiles()')).find((p) => p.profile === 'Delta');
     // Partial saves (starring, moving group) keep the rest of the profile, cards included.
     const alpha = (await ui('window.fleet.listProfiles()')).find((p) => p.profile === 'Alpha');
@@ -549,7 +549,7 @@ app.whenReady().then(async () => {
     assert.equal(starred.favorite, true);
     assert.deepEqual([starred.email, starred.cards.length, starred.group], [alpha.email, alpha.cards.length, 'East']);
     assert.deepEqual((await ui(`window.fleet.saveProfile({ id: ${JSON.stringify(delta.id)}, group: 'West' })`)).errors, []);
-    await waitFor(() => ui(`!/Profile: Delta/.test(document.querySelector('.tab[aria-selected="true"]').title)`), 'moved account signed out');
+    await waitFor(() => ui(`document.querySelector('.picker-label')?.textContent !== 'Delta'`), 'moved account signed out');
     assert.match(await ui(`document.querySelector('#notice').textContent`), /signed out/);
     // Two groups can't share a name (switching is confirmed by typing it).
     assert.match((await ui(`window.fleet.renameGroup({ group: 'West', name: 'east' })`)).error, /already called/);
@@ -561,51 +561,30 @@ app.whenReady().then(async () => {
     assert.match((await ui(`window.fleet.saveProfile(${JSON.stringify({ ...sameName, group: 'West' })})`)).errors[0], /West team already has a profile named "Delta"/);
     assert.deepEqual((await ui(`window.fleet.saveProfile({ id: ${JSON.stringify(delta.id)}, notes: 'edited' })`)).errors, [], 'editing one of two same-named profiles works');
 
-    // Clear all: every tab's session is wiped (cookies and site storage), each gets a new IP, all go home.
-    const tabViews = () => pageViews().map((v) => v.webContents);
-    for (const wc of tabViews()) await wc.executeJavaScript(`localStorage.setItem('k', 'v')`).catch(() => {});
-    const tabIds = await ui(`[...document.querySelectorAll('.tab')].map((el) => el.dataset.id)`);
-    const proxiesBefore = await ui(`[...document.querySelectorAll('.tab')].map((el) => el.title.split('\\n')[2])`);
-    const savedAccounts = (await ui('window.fleet.listProfiles()')).map((p) => p.id);
-    const oldCookies = new Set();
-    for (const id of savedAccounts) {
-      for (const c of await session.fromPartition(`persist:profile-${id}`).cookies.get({})) oldCookies.add(c.value);
-    }
-    assert.ok(oldCookies.size >= 2, 'accounts have saved cookies before');
-    const orphan = path.join(userData, 'Partitions', 'profile-deleted-account');
-    fs.mkdirSync(orphan, { recursive: true });
+    // Clear tab: the selected tab's cookies and storage are wiped, it switches to a fresh IP, and
+    // returns home. (The old "clear everything in all tabs" button is gone — clearing is now per-tab
+    // via hardReset, plus a bulk multi-select cookie-clear; this exercises the per-tab path.)
+    const visibleWc = () => pageViews().find((v) => v.getVisible())?.webContents;
+    await visibleWc().executeJavaScript(`localStorage.setItem('k', 'v')`).catch(() => {});
+    const usersBeforeReset = new Set(requests.map((r) => r.user)); // the per-tab proxy tooltip is gone — track IPs via the request log
     let asked = null;
     dialog.showMessageBox = async (_win, options) => { asked = options.message; return { response: 0 }; };
     const requestsBefore = requests.length;
-    await ui(`document.querySelector('[data-cmd="hardReset"]').click()`);
-    await waitFor(() => ui(`/^Cleared \\d+ tabs/.test(document.querySelector('#notice').textContent)`), 'reset done');
-    assert.match(asked, /^Clear everything in all \d+ tabs\?$/);
-    const folders = () => fs.readdirSync(path.join(userData, 'Partitions')).filter((n) => n.startsWith('profile-'));
-    for (const id of savedAccounts) {
-      assert.ok(!folders().includes(`profile-${id}`), `the account's old session folder is deleted from disk: ${folders()}`);
-    }
-    for (const wc of tabViews()) {
-      assert.ok(!/Partitions\/profile-[0-9a-f-]{36}$/.test(wc.session.storagePath ?? ''), 'account tabs run in a new session folder');
-      const kept = (await wc.session.cookies.get({})).filter((c) => oldCookies.has(c.value));
-      assert.deepEqual(kept, [], 'no old cookie in any tab (a new visit may set new ones)');
-    }
-    assert.equal(fs.existsSync(orphan), false, "a deleted account's saved session is removed from disk");
-    results.resetNotice = await ui(`document.querySelector('#notice').textContent`);
-    for (const id of tabIds) await ui(`window.fleet.command('selectTab', ${JSON.stringify(id)})`);
-    await waitFor(() => requests.length - requestsBefore >= tabIds.length, 'every tab reloaded');
+    await ui(`window.fleet.command('hardReset')`);
+    await waitFor(() => asked !== null, 'clear confirmation shown');
+    assert.match(asked, /clear this tab|switch its ip|signed out/i, `clear dialog text: ${asked}`);
+    await waitFor(() => {
+      const u = visibleWc()?.getURL();
+      return Boolean(u) && /^http:\/\/fleet-e2e\.example\//.test(u) && !u.endsWith('/signin');
+    }, 'cleared tab reloaded to its home page');
+    await waitFor(() => !visibleWc().isLoading(), 'cleared tab loaded');
+    assert.equal(await visibleWc().executeJavaScript(`localStorage.getItem('k')`), null, 'site storage cleared');
+    assert.equal(visibleWc().navigationHistory.canGoBack(), false, 'history cleared');
     const afterReset = requests.slice(requestsBefore).filter((r) => r.path !== '/favicon.ico');
-    assert.ok(afterReset.every((r) => r.cookie === null), `no cookies survive: ${JSON.stringify(afterReset)}`);
-    await waitFor(async () => {
-      const urls = await ui(`[...document.querySelectorAll('.tab')].map((el) => el.title.split('\\n')[1])`);
-      return urls.every((u) => u === 'http://fleet-e2e.example/' || u === 'http://fleet-e2e.example/home-delta');
-    }, 'every tab on its home page');
-    for (const wc of tabViews()) {
-      await waitFor(() => !wc.isLoading(), 'tab loaded');
-      assert.equal(await wc.executeJavaScript(`localStorage.getItem('k')`), null, 'site storage cleared');
-      assert.equal(wc.navigationHistory.canGoBack(), false, 'history cleared');
-    }
-    const proxiesAfter = await ui(`[...document.querySelectorAll('.tab')].map((el) => el.title.split('\\n')[2])`);
-    assert.ok(proxiesAfter.some((p, i) => p !== proxiesBefore[i]), `new IPs: ${JSON.stringify([proxiesBefore, proxiesAfter])}`);
+    assert.ok(afterReset.length > 0, 'the cleared tab reloaded');
+    assert.ok(afterReset.every((r) => r.cookie === null), `no cookie survives the clear: ${JSON.stringify(afterReset)}`);
+    assert.ok(afterReset.some((r) => !usersBeforeReset.has(r.user)), `cleared tab got a fresh IP: ${JSON.stringify(afterReset.map((r) => r.user))}`);
+    results.resetNotice = await ui(`document.querySelector('#notice').textContent`);
 
     console.log(JSON.stringify({ ok: true, ...results }, null, 2));
     app.exit(0);

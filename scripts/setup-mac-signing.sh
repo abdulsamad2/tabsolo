@@ -16,10 +16,17 @@ set -euo pipefail
 NAME="TabSolo Self-Signed"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
-if security find-identity -v -p codesigning | grep -q "$NAME"; then
+if security find-identity -p codesigning | grep -q "$NAME"; then
   echo "✓ Signing identity \"$NAME\" already present. Nothing to do."
   exit 0
 fi
+
+# A previous failed import can leave the certificate WITHOUT its private key (no usable identity).
+# Remove any such leftover so this run's cert+key pair is the only "TabSolo Self-Signed" present,
+# otherwise codesign sees two matching certs and the identity stays ambiguous/unusable.
+while security find-certificate -c "$NAME" "$KEYCHAIN" >/dev/null 2>&1; do
+  security delete-certificate -c "$NAME" "$KEYCHAIN" >/dev/null 2>&1 || break
+done
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -39,11 +46,15 @@ CNF
 
 openssl req -x509 -newkey rsa:2048 -keyout "$TMP/key.pem" -out "$TMP/cert.pem" \
   -days 3650 -nodes -config "$TMP/csr.cnf" >/dev/null 2>&1
-openssl pkcs12 -export -out "$TMP/signing.p12" -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout pass: >/dev/null 2>&1
+# Non-empty transient password: an EMPTY PKCS#12 password makes `security import` fail with
+# "MAC verification failed (wrong password?)" because LibreSSL and macOS disagree on the empty-
+# password MAC. The .p12 is a temp file deleted on exit, so this password is throwaway.
+P12_PW="tabsolo-signing-import"
+openssl pkcs12 -export -out "$TMP/signing.p12" -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout "pass:$P12_PW" >/dev/null 2>&1
 
 # -A lets codesign use the key without a per-build prompt. macOS will ask for your login password
 # once here to modify the keychain — that is expected.
-security import "$TMP/signing.p12" -k "$KEYCHAIN" -P "" -T /usr/bin/codesign -A
+security import "$TMP/signing.p12" -k "$KEYCHAIN" -P "$P12_PW" -T /usr/bin/codesign -A
 
 # Modern macOS also gates key use behind a partition list; set it so the build never prompts.
 # Needs your login (keychain) password.
@@ -52,8 +63,14 @@ security set-key-partition-list -S apple-tool:,apple: -s -k "$PW" "$KEYCHAIN" >/
   echo "  (partition-list step skipped — the first build may show one codesign prompt; click Always Allow)"
 
 echo
-echo "✓ Imported \"$NAME\"."
-security find-identity -v -p codesigning | grep "$NAME" || true
+# Verify a USABLE identity (cert + its private key) actually landed — don't print a false success.
+if ! security find-identity -p codesigning | grep -q "$NAME"; then
+  echo "✗ Import did not produce a usable code-signing identity (cert present but no matching key)."
+  echo "  Re-run this script; if it keeps failing, your 'security import' may be refusing the key."
+  exit 1
+fi
+echo "✓ Imported \"$NAME\" (cert + private key)."
+security find-identity -p codesigning | grep "$NAME"
 echo
 echo "Next:"
 echo "  1. npm run dist:mac"

@@ -7,7 +7,7 @@ and logins, and its own IP address. Run dozens of accounts side by side, swap a 
 without logging out, and keep each profile's session exactly where you left it.
 
 [**Download**](https://github.com/abdulsamad2/tabsolo/releases/latest) ·
-[Website](https://tabsolo-site.vercel.app)
+[Website](https://www.tabsolo.com)
 
 ---
 
@@ -90,4 +90,4 @@ To publish an update that installed apps pick up:
 
 ### Website
 
-The website (https://tabsolo-site.vercel.app) is a separate Next.js project, deployed on Vercel.
+The website (https://www.tabsolo.com) is a separate Next.js project, deployed on Vercel.
