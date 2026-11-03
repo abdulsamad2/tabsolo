@@ -34,9 +34,12 @@ const { buildRecorderScript } = require('./recorder-script');
 const { buildReplayerScript } = require('./replayer-script');
 const playbooksStore = require('./playbooks');
 const { createLicenseClient } = require('./license/license');
-const { createTelemetryClient } = require('./license/telemetry');
+const { createTelemetryClient, instrumentIpc } = require('./license/telemetry');
 const { withoutSecrets, mergeImported, decodeTextFile, parseProfilesCSV, buildProfile, publicProfile, planAssignments, buildAutofillScript, buildSubmitScript, buildCardDigitsScript, chooseShownCard, profilesToCSV } = require('./profiles');
 const { resolveForTab } = require('./resolvers');
+
+// Before any handler is registered, so every one is covered.
+instrumentIpc(ipcMain, () => telemetryClient);
 const { parseSheetURL, csvExportURL, viewURL, isSheetsURL, sheetListURL, parseSheetList } = require('./sheets');
 const sync = require('./sync');
 const { execFile, execFileSync } = require('node:child_process');
@@ -1137,7 +1140,10 @@ ipcMain.on('replay:progress', (event, info) => {
     if (tab) tab.playbookRunId = null;
     if (info.status === 'done' || info.status === 'cancelled') {
       notify(`Playbook ${info.status === 'done' ? 'completed' : 'stopped'} on tab ${slot}.`);
+      telemetryClient?.trackEvent(`playbook.${info.status}`);
     } else {
+      // Status and step only: the detail can name what's on the page.
+      telemetryClient?.trackError(`Playbook ${info.status} at step ${run.offset + info.step + 1}`, { kind: 'playbook' });
       notify(`Playbook stopped at step ${run.offset + info.step + 1} on tab ${slot}: ${info.detail || info.status}`);
     }
   } else if (info.status === 'captcha') {
@@ -1356,6 +1362,7 @@ function createView(tab) {
   contents.on('render-process-gone', (_event, details) => {
     if (!current()) return;
     tab.error = `Page stopped (${details.reason}). Reload to try again.`;
+    telemetryClient?.trackError(`Tab process stopped: ${details.reason}`, { kind: 'crash' });
     sendState();
   });
   contents.setWindowOpenHandler(({ url }) => {
@@ -3863,6 +3870,9 @@ function createWindow() {
   // The chrome UI is local and never navigates or opens windows.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
+  // Bugs in the app's own interface. Tabs are separate web contents, so websites' errors never come through here.
+  win.webContents.on('console-message', (event) => { if (event.level === 'error') telemetryClient?.trackError(event.message, { kind: 'ui' }); });
+  win.webContents.on('render-process-gone', (_event, details) => telemetryClient?.trackError(`Interface process stopped: ${details.reason}`, { kind: 'crash' }));
   // Right-click context menu for the TabSolo UI itself (address bar, notes, profile forms,
   // settings fields). Without this, right-click on an input in the chrome does nothing. Mirrors
   // what we already give page content: Cut / Copy / Paste / Select All, with edit-flag gating.
@@ -3914,7 +3924,7 @@ function initLicenseAndTelemetry() {
     deviceId: licenseClient.deviceId,
     getLicenseKey: () => licenseClient.currentLicenseKey(),
     getToken: () => licenseClient.currentToken(),
-    enabled: settings?.telemetryEnabled !== false,
+    isEnabled: () => settings?.telemetryEnabled !== false,
   });
   telemetryClient.start();
 
@@ -4059,7 +4069,7 @@ app.on('will-quit', () => {
  * opens, including a check that finished before the window had loaded.
  */
 const UPDATE_CHECK_INTERVAL = 2 * 60 * 60 * 1000;
-const SETTINGS_DEFAULTS = { autoDownload: true, notifyUpdates: true, matchProxyTimezone: true, autoOpenOrders: false };
+const SETTINGS_DEFAULTS = { autoDownload: true, notifyUpdates: true, matchProxyTimezone: true, autoOpenOrders: false, telemetryEnabled: true };
 let settings = { ...SETTINGS_DEFAULTS };
 let autoUpdater = null;
 let updateStatus = { kind: 'idle' };

@@ -1555,6 +1555,7 @@ function renderUpdates() {
   $('#setting-autodownload').checked = settings.autoDownload;
   $('#setting-match-tz').checked = settings.matchProxyTimezone !== false;
   $('#setting-auto-open-orders').checked = settings.autoOpenOrders === true;
+  $('#setting-telemetry').checked = settings.telemetryEnabled !== false; // on by default; unchecking opts out
   $('#update-checked').textContent = lastChecked ? `Last checked ${new Date(lastChecked).toLocaleString()}` : '';
 
   // Banner under the toolbar: only for news worth acting on, and only when notifications are on.
@@ -1629,7 +1630,7 @@ $('#update-dismiss').addEventListener('click', () => {
   bannerDismissedFor = `${status.kind}:${status.version ?? ''}`;
   renderUpdates();
 });
-for (const [selector, key] of [['#setting-notify', 'notifyUpdates'], ['#setting-autodownload', 'autoDownload'], ['#setting-match-tz', 'matchProxyTimezone'], ['#setting-auto-open-orders', 'autoOpenOrders']]) {
+for (const [selector, key] of [['#setting-notify', 'notifyUpdates'], ['#setting-autodownload', 'autoDownload'], ['#setting-match-tz', 'matchProxyTimezone'], ['#setting-auto-open-orders', 'autoOpenOrders'], ['#setting-telemetry', 'telemetryEnabled']]) {
   $(selector).addEventListener('change', async (event) => {
     updateInfo = await window.fleet.saveSettings({ [key]: event.target.checked });
     renderUpdates();

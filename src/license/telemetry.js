@@ -1,10 +1,10 @@
 'use strict';
 
 // Telemetry client. Batches events and errors to disk, flushes to the API every 60s. On network
-// failure the queue stays on disk and retries next tick. Pseudonymous — identified only by
-// device_id and (optionally) license_key.
+// failure the queue stays on disk and retries next tick. Linked to the license key, which the
+// website's admin panel can match to an account, so nothing the user typed or visited belongs here.
 //
-// Opt-out: pass `enabled: false` or set the `telemetryEnabled` config flag to false.
+// Opt-out: `isEnabled` is asked every time, so unticking the setting takes effect immediately.
 
 const fs = require('fs');
 const path = require('path');
@@ -14,12 +14,49 @@ const FLUSH_INTERVAL_MS = 60_000;
 const QUEUE_FILE = 'telemetry-queue.json';
 const MAX_QUEUE = 500;
 
-function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLicenseKey, getToken, enabled = true }) {
+// User actions worth counting. Only the channel name is reported, never its arguments.
+const FEATURES = new Set([
+  'launch', 'recorder:start', 'playbooks:save-from-last-recording', 'playbooks:run', 'playbooks:run-on-url',
+  'proxies:scan', 'proxies:scan-text', 'profiles:import-file', 'profiles:import-text', 'profiles:import-sheet',
+  'profiles:save', 'profiles:export-file', 'groups:switch', 'sync:save-settings', 'orders:set-status',
+  'accounts:health-check', 'seats:test', 'seats:test-flow', 'update:install-now',
+]);
+
+// Error text can quote what the user was doing: proxy logins, sites, emails, card numbers, their name in a path.
+function scrub(text) {
+  return String(text)
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"<>)]+/gi, (url) => (url.startsWith('file:') ? '[file]' : '[url]'))
+    .replace(/[^\s@'"<>]+@[^\s@'"<>]+\.[^\s'"<>]+/g, '[email]')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?::[^\s:'"]+:[^\s'"]+)?/g, '[ip]')
+    .replace(/\b(?:\d[ -]?){12,19}\b/g, '[number]')
+    .replace(/(\/Users\/|\/home\/|[A-Z]:\\Users\\)[^/\\\s]+/gi, '$1[user]');
+}
+
+/** Reports feature use and failures from every ipcMain.handle in one place, without seeing arguments. */
+function instrumentIpc(ipcMain, getClient) {
+  const handle = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, handler) => handle(channel, async (...args) => {
+    const feature = FEATURES.has(channel);
+    if (feature) getClient()?.trackEvent(channel);
+    try {
+      const result = await handler(...args);
+      if (feature && result?.error) getClient()?.trackError(`${channel}: ${result.error}`, { kind: 'ipc', channel });
+      return result;
+    } catch (err) {
+      getClient()?.trackError(err, { kind: 'ipc', channel });
+      throw err;
+    }
+  });
+}
+
+function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLicenseKey, getToken, isEnabled = () => true }) {
   const base = (apiBase || '').replace(/\/+$/, '');
   const queuePath = path.join(dataDir, QUEUE_FILE);
   let queue = loadQueue();
   let timer = null;
   let flushing = false;
+  // One report per distinct error per launch, so a failure in a loop can't push out everything else.
+  const seenErrors = new Set();
 
   function loadQueue() {
     try { return JSON.parse(fs.readFileSync(queuePath, 'utf8')) || []; }
@@ -35,7 +72,7 @@ function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLice
   }
 
   function enqueue(kind, body) {
-    if (!enabled || !base) return;
+    if (!isEnabled() || !base) return;
     if (queue.length >= MAX_QUEUE) queue.shift();
     queue.push({ kind, body: { ...body, deviceId, appVersion, os: `${process.platform} ${os.release()}`, licenseKey: getLicenseKey?.() || null } });
     saveQueue();
@@ -46,13 +83,17 @@ function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLice
   }
 
   function trackError(err, context = {}) {
-    const message = String(err?.message || err || 'unknown').slice(0, 2000);
-    const stack = err?.stack ? String(err.stack).slice(0, 8000) : null;
+    const message = scrub(err?.message || err || 'unknown').slice(0, 2000);
+    if (seenErrors.has(message)) return;
+    seenErrors.add(message);
+    const stack = err?.stack ? scrub(err.stack).slice(0, 8000) : null;
     enqueue('error', { kind: context.kind || 'generic', message, stack, context });
   }
 
   async function flush() {
-    if (!enabled || !base || flushing || queue.length === 0) return;
+    // Reports queued before someone opts out must not be sent afterwards.
+    if (!isEnabled()) { if (queue.length) { queue = []; saveQueue(); } return; }
+    if (!base || flushing || queue.length === 0) return;
     flushing = true;
     const token = getToken?.() || null;
     // No token yet (activation not complete): hold the queue, don't drop. The server rejects
@@ -98,4 +139,4 @@ function createTelemetryClient({ apiBase, dataDir, appVersion, deviceId, getLice
   return { trackEvent, trackError, flush, start, stop };
 }
 
-module.exports = { createTelemetryClient };
+module.exports = { createTelemetryClient, instrumentIpc, scrub };
