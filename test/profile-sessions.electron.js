@@ -100,7 +100,13 @@ app.whenReady().then(async () => {
     const id = (name) => profiles.find((p) => p.profile === name).id;
     const tabIds = await ui(`[...document.querySelectorAll('.tab')].map((el) => el.dataset.id)`);
     const send = (name, tabId, arg) => ui(`window.fleet.command(${JSON.stringify(name)}, ${JSON.stringify(tabId)}, ${JSON.stringify(arg)})`);
-    const proxyUser = (tabId) => ui(`document.querySelector('.tab[data-id="${tabId}"]').title.split('\\n').find((l) => l.startsWith('Proxy:'))?.split(' · ').pop()`);
+    // The tab's proxy is no longer shown in a tooltip (that was removed); reload the tab and read the
+    // proxy user its request came through. Other tabs stay idle, so requests[count] is this tab's.
+    const proxyUser = async (tabId) => {
+      const count = requests.length;
+      await send('reload', tabId);
+      return (await waitFor(() => requests[count], `proxy request after reload on tab ${tabId}`)).user;
+    };
 
     /** Runs an action on one tab (the others are idle) and returns the cookie its next page request sent. */
     async function nextCookie(tabId, action) {

@@ -98,7 +98,9 @@ app.whenReady().then(async () => {
       form.elements.url.value = ${JSON.stringify(sheetUrl)};
       form.dispatchEvent(new Event('submit', { cancelable: true }));
     })()`);
-    await waitFor(() => ui(`[...document.querySelectorAll('.tab')].some((el) => el.title.includes('/spreadsheets/d/${SHEET_ID}/'))`), 'sheet tab opened');
+    // Wait for the app's own "ready to import" signal, not just the URL — otherwise the import runs
+    // before the sheet finishes loading and the late "Sheet opened" notice overwrites the summary.
+    await waitFor(() => ui(`/Sheet opened/.test(document.querySelector('#notice').textContent)`), 'sheet tab opened');
 
     // Click "Import this sheet" and verify profiles were added.
     await ui(`document.querySelector('#sheet-import-run').click()`);
@@ -107,7 +109,11 @@ app.whenReady().then(async () => {
       return list.length >= 4 && list;
     }, 'profiles imported from both sheets');
     assert.deepEqual(imported.map((p) => `${p.group}/${p.profile}`).sort(), ['NX SLOT 1/Alpha', 'NX SLOT 1/Charlie', 'WiLL/Alpha', 'WiLL/Bravo']);
-    const notice = await ui(`document.querySelector('#notice').textContent`);
+    // Wait for the renderer to show the import summary — the profile count above can race ahead of it.
+    const notice = await waitFor(async () => {
+      const t = await ui(`document.querySelector('#notice').textContent`);
+      return /account\(s\)/.test(t) ? t : null;
+    }, 'import summary notice shown');
     assert.match(notice, /WiLL: 2 account\(s\), 1 with a card\/CVV/);
     assert.match(notice, /Boss → NX SLOT 1: 2 account\(s\), 2 with a card\/CVV; 1 empty slot\(s\) skipped/);
     assert.match(notice, /Fixed automatically: 1 "textchest" resolver was missing the colon/);
