@@ -138,10 +138,10 @@
           <span class="group-dot" aria-hidden="true"></span><span class="group-badge-name"></span><span class="group-lock" aria-hidden="true">🔒</span>
         </button>
         <div id="fav-profiles" class="fav-profiles" title="Click a favorite profile to open a tab with it"></div>
-        <button id="orders-open" title="Your Automatiq Sync orders (Ctrl/⌘ Shift U)">Orders</button>
+        <button id="orders-open" title="Your Automatiq Sync orders (Ctrl/⌘ Shift U)" hidden>Orders</button>
         <button id="seat-test-open" title="Dev: inject the TM seat matcher into the current tab with a fake order" hidden>🧪 Seat test</button>
-        <button id="record-toggle" title="Record every click, input, and navigation on this tab. Stop to save as a reusable playbook.">🔴 Record</button>
-        <button id="playbooks-open" title="Open the saved playbooks library">📜 Playbooks</button>
+        <button id="record-toggle" title="Record every click, input, and navigation on this tab. Stop to save as a reusable playbook." hidden>🔴 Record</button>
+        <button id="playbooks-open" title="Open the saved playbooks library" hidden>📜 Playbooks</button>
         <button id="panel-toggle" class="primary-soft" title="Open the side panel: profiles, colors, timer, notes, quick fill (Ctrl/⌘ \)" aria-pressed="false">Profiles</button>
         <button id="settings-open" class="icon settings-btn" title="Settings — updates, notifications, theme (Ctrl/⌘ ,)" aria-label="Settings">⚙</button>
         <button id="more-menu-btn" class="icon" title="More actions" aria-label="More actions" aria-haspopup="menu">⋯</button>
@@ -461,10 +461,10 @@
       <section class="settings-group">
         <h3>Browsing</h3>
         <label class="check"><input id="setting-match-tz" type="checkbox"><span>Set the clock to the proxies' timezone<small class="hint">Each tab's pages use that tab's proxy timezone, not this computer's clock. A Los Angeles proxy shows Pacific time even when the computer is set to New York, Seoul, or anywhere else, and a tab on another proxy keeps its own time. This computer's clock is not changed.</small></span></label>
-        <label class="check"><input id="setting-auto-open-orders" type="checkbox"><span>Auto-open new invoiced orders<small class="hint">Polls Automatiq every two minutes. For each new invoiced order a tab opens on the Ticketmaster search for its event. When the tab reaches a Ticketmaster event page an overlay highlights the matching Section · Row · Seats from the order; press <kbd>⌘ Enter</kbd> (or <kbd>Ctrl Enter</kbd>) to click the match. Final purchase is still manual.</small></span></label>
+        <label class="check" hidden><input id="setting-auto-open-orders" type="checkbox"><span>Auto-open new invoiced orders<small class="hint">Polls Automatiq every two minutes. For each new invoiced order a tab opens on the Ticketmaster search for its event. When the tab reaches a Ticketmaster event page an overlay highlights the matching Section · Row · Seats from the order; press <kbd>⌘ Enter</kbd> (or <kbd>Ctrl Enter</kbd>) to click the match. Final purchase is still manual.</small></span></label>
       </section>
 
-      <section class="settings-group">
+      <section class="settings-group" hidden>
         <h3>Automatiq Sync</h3>
         <p class="hint">Find these in <strong>Sync → Settings</strong>. Used for the Orders screen; the token is stored encrypted.</p>
         <form id="sync-form" class="sync-form" autocomplete="off">

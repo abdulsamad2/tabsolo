@@ -353,7 +353,7 @@ app.post('/admin/plan-end', async (c) => {
   return c.json({ ok: true, plan: body.plan, endsAt: body.endsAt });
 });
 
-const BETA_MAX_DEVICES = 2;
+const BETA_MAX_DEVICES = 1;
 
 /** TS-XXXX-XXXX-XXXX. 32 symbols (no 0/O/1/I) divide 256 evenly, so every symbol is equally likely. */
 function newLicenseKey(): string {

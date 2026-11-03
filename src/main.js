@@ -3819,7 +3819,6 @@ function updateMenu() {
           enabled: inBrowser,
           click: () => win.webContents.send('toggle-panel', 'profiles'),
         },
-        { label: 'Orders', accelerator: 'CmdOrCtrl+Shift+U', click: () => { win?.webContents.focus(); win?.webContents.send('open-orders'); } },
         { type: 'separator' },
         {
           label: 'Check All Account Logins',
