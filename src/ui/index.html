@@ -16,7 +16,7 @@
     <form id="launch-form" class="card" novalidate>
       <header>
         <button type="button" id="launcher-settings" class="icon settings-btn" title="Settings — updates, notifications, theme (Ctrl/⌘ ,)" aria-label="Settings">⚙</button>
-        <h1>TabSolo <span class="beta-badge">Beta</span></h1>
+        <h1>TabSolo</h1>
         <p class="muted">Every tab its own session and IP.</p>
       </header>
 
@@ -438,7 +438,7 @@
         <h3>Updates</h3>
         <div class="update-row">
           <div class="update-summary">
-            <strong>TabSolo <span id="app-version"></span> <span class="beta-badge">Beta</span></strong>
+            <strong>TabSolo <span id="app-version"></span></strong>
             <span id="update-state" class="hint"></span>
             <progress id="update-progress" max="100" hidden></progress>
           </div>
@@ -461,6 +461,7 @@
             <span class="hint">Moving to another computer? Deactivate here first to free this one's slot.</span>
           </div>
           <div class="update-actions">
+            <button id="license-manage">Manage subscription</button>
             <button id="license-deactivate">Deactivate this computer</button>
           </div>
         </div>

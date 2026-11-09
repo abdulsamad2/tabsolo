@@ -3951,9 +3951,9 @@ function showLoginWindow({ reason = 'no_license' } = {}) {
       loginWin.webContents.once('did-finish-load', () => {
         const msg = reason === 'revoked' ? 'This license was revoked. Please activate a different key.'
                   : reason === 'device_revoked' ? 'This device was removed from the license. Re-activate to continue.'
-                  : reason === 'plan_ended' ? 'The free beta has ended. Enter a paid license key to keep using TabSolo.'
+                  : reason === 'plan_ended' ? 'Your free license has ended. Start a subscription or enter a license key to keep using TabSolo.'
                   : reason === 'device_mismatch' ? 'This license was activated on a different computer. Enter your key to activate it here.'
-                  : reason === 'expired' ? 'This license has expired. Activate a renewed key.'
+                  : reason === 'expired' ? 'This license or subscription has ended. Subscribe again or activate another key.'
                   : reason === 'expired_offline' ? 'Offline grace period expired. Reconnect to re-validate.'
                   : null;
         if (msg) loginWin.webContents.executeJavaScript(
@@ -3977,6 +3977,19 @@ ipcMain.handle('license:activate', async (_event, key) => {
   if (result.ok) telemetryClient?.trackEvent('license.activated', { plan: result.plan });
   else telemetryClient?.trackEvent('license.activation_failed', { reason: result.error });
   return result;
+});
+
+ipcMain.handle('license:subscribe', async () => {
+  if (!licenseClient) return { ok: false, error: 'not_ready' };
+  const result = await licenseClient.subscribe((url) => shell.openExternal(url));
+  if (result.ok) telemetryClient?.trackEvent('license.subscribed', { plan: result.plan });
+  return result;
+});
+
+ipcMain.handle('license:portal', async () => {
+  const result = await licenseClient.portalUrl();
+  if (result.ok) shell.openExternal(result.url);
+  return { ok: result.ok, error: result.error };
 });
 
 ipcMain.handle('license:info', () => ({

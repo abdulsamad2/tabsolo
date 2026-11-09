@@ -8,6 +8,10 @@ compatibility_flags = ["nodejs_compat"]
 #   wrangler secret put TOKEN_SIGNING_JWK
 # ADMIN_TOKEN  — bearer token for the admin endpoints (/admin/licenses, …)
 # TOKEN_SIGNING_JWK — Ed25519 private key (JWK) that signs the tokens the client caches; the app holds the public half
+#   wrangler secret put POLAR_ACCESS_TOKEN
+#   wrangler secret put POLAR_WEBHOOK_SECRET
+# POLAR_ACCESS_TOKEN — Polar organization access token with checkouts:write and customer_sessions:write
+# POLAR_WEBHOOK_SECRET — the whsec_… secret of the Polar webhook endpoint that points at /webhooks/polar
 
 [[d1_databases]]
 binding = "DB"
@@ -20,3 +24,8 @@ migrations_dir = "migrations"
 APP_NAME = "TabSolo"
 # How long a cached activation token is valid before the client must re-validate (ms).
 GRACE_PERIOD_MS = "604800000"   # 7 days
+# Polar billing. Sandbox and live have separate tokens, products and webhook secrets; switch all four together.
+# Live is https://api.polar.sh
+POLAR_API = "https://sandbox-api.polar.sh"
+# The subscription product's ID. Its price and free-trial length are set on the product in Polar.
+POLAR_PRODUCT_ID = ""

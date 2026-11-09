@@ -36,6 +36,25 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+const subscribe = document.getElementById('subscribe');
+subscribe.addEventListener('click', async () => {
+  subscribe.disabled = true;
+  subscribe.textContent = 'Waiting for checkout…';
+  status.className = 'status';
+  status.textContent = 'Finish the checkout in your browser. TabSolo unlocks by itself when it is done.';
+  const result = await licenseApi.subscribe();
+  subscribe.disabled = false;
+  subscribe.textContent = 'Start free trial';
+  if (result?.ok) {
+    status.className = 'status ok';
+    status.textContent = '✓ Subscription active.';
+    setTimeout(() => licenseApi.proceed(), 700);
+  } else {
+    status.className = 'status err';
+    status.textContent = humanize(result?.error) || 'Can\'t open the checkout right now. Check your internet connection and try again.';
+  }
+});
+
 buy.addEventListener('click', (event) => {
   event.preventDefault();
   licenseApi.openExternal('https://www.tabsolo.com/sign-up');
@@ -46,7 +65,9 @@ function humanize(code) {
     invalid_key: 'That key doesn\'t match any license on file.',
     revoked: 'This license has been revoked. Contact support.',
     expired: 'This license has expired. Renew to continue.',
-    plan_ended: 'The free beta has ended. Enter a paid license key to keep using TabSolo.',
+    checkout_timeout: 'No payment arrived yet. If you finished the checkout, paste the license key shown on its last page.',
+    billing_unavailable: 'Subscriptions aren\'t available yet.',
+    plan_ended: 'Your free license has ended. Start a subscription or enter a license key to keep using TabSolo.',
     device_limit_reached: 'This key is already active on the maximum number of computers. Contact support to free one up.',
     network_error: 'Can\'t reach the license server. Check your internet connection.',
     empty_key: 'Please enter a license key.',

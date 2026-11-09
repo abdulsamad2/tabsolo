@@ -10,6 +10,8 @@
 //   2. If no cached token: show the login window, call /activate with the user's key + this
 //      device's fingerprint, save the returned token.
 //   3. Periodic /validate every 6h picks up server-side revocations.
+//   4. Subscribing: the server hands back a Polar checkout link and a new key. The key starts working
+//      once the checkout is paid (or its free trial starts), so the app activates it as soon as it does.
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -151,11 +153,33 @@ function createLicenseClient({ apiBase = DEFAULT_API_BASE, dataDir, appVersion, 
     return { ok: true };
   }
 
+  // Opens the checkout in the browser, then waits for the payment to reach the server: until then the
+  // key is unknown there. The same key is shown on the page after checkout, in case this gives up first.
+  async function subscribe(openUrl, { pollMs = 3000, tries = 400 } = {}) {
+    const { data } = await postJson(`${base}/api/billing/checkout`, {});
+    // The link is opened by the OS, so nothing but a web page may come back from the server.
+    if (!data?.ok || !/^https:\/\//.test(data.url)) return { ok: false, error: data?.error || 'network_error' };
+    await openUrl(data.url);
+    for (let i = 0; i < tries; i++) {
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      const result = await activate(data.key);
+      // Keep waiting through "no such key yet" and network blips; any other answer from the server is final.
+      if (result.ok || (result.detail?.ok === false && result.error !== 'invalid_key')) return result;
+    }
+    return { ok: false, error: 'checkout_timeout' };
+  }
+
+  async function portalUrl() {
+    const { data } = await postJson(`${base}/api/billing/portal`, { token: currentToken() });
+    if (!data?.ok || !/^https:\/\//.test(data.url)) return { ok: false, error: data?.error || 'network_error' };
+    return { ok: true, url: data.url };
+  }
+
   function currentLicenseKey() { return readCache(dataDir)?.licenseKey || null; }
   function currentPlan() { return readCache(dataDir)?.plan || null; }
   function currentToken() { return readCache(dataDir)?.token || null; }
 
-  return { activate, validateAtStartup, deactivate, currentLicenseKey, currentPlan, currentToken, deviceId, deviceLabel };
+  return { activate, validateAtStartup, deactivate, subscribe, portalUrl, currentLicenseKey, currentPlan, currentToken, deviceId, deviceLabel };
 }
 
 module.exports = { createLicenseClient, readToken };

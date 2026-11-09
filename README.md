@@ -1,4 +1,4 @@
-# TabSolo (beta)
+# TabSolo
 
 **One browser. Every tab its own session.**
 

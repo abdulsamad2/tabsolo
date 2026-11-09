@@ -4,9 +4,16 @@
 //   POST /api/license/activate   — redeem a key + bind this device (returns a signed token)
 //   POST /api/license/validate   — periodic re-check (returns ok + plan)
 //   POST /api/license/deactivate — free this computer's slot
+//   POST /api/billing/checkout   — a Polar checkout link plus the license key it will pay for
+//   POST /api/billing/portal     — a Polar customer portal link for the caller's subscription
+//   GET  /billing/done           — the page Polar sends the customer to after checkout
+//   POST /webhooks/polar         — Polar's subscription events; keeps the subscription's license in step
 //   POST /api/telemetry/event    — one usage event, fire-and-forget
 //   POST /api/telemetry/error    — one error report, fire-and-forget
 //   GET  /admin/licenses         — admin-only: list all licenses (needs Bearer <ADMIN_TOKEN>)
+//   GET  /admin/license?email=   — admin-only: the license the website shows on that account's page
+//   POST /admin/checkout         — admin-only: a Polar checkout link for a website account
+//   POST /admin/portal           — admin-only: a Polar customer portal link for a license
 //   GET  /admin/activations      — admin-only: every computer using a license
 //   POST /admin/license          — admin-only: issue a license
 //   POST /admin/revoke           — admin-only: revoke a license or a single device activation
@@ -30,6 +37,10 @@ type Env = {
   TOKEN_SIGNING_JWK: string;
   APP_NAME: string;
   GRACE_PERIOD_MS: string;
+  POLAR_API: string;
+  POLAR_PRODUCT_ID: string;
+  POLAR_ACCESS_TOKEN: string;
+  POLAR_WEBHOOK_SECRET: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -240,6 +251,142 @@ app.post('/api/license/deactivate', async (c) => {
   return c.json({ ok: true });
 });
 
+// ───────────────────────────────────────────────── billing (Polar)
+// Polar owns the subscription, its free trial and the payments. A license row mirrors each subscription,
+// so activation, the device limit and offline tokens work exactly as for a hand-issued key.
+// The app asks for a checkout link and gets a new key with it; the key starts working when Polar's
+// webhook reports the subscription, which is what the app waits for.
+
+const SUBSCRIPTION_PLAN = 'solo';
+// Past the paid period, so a late renewal webhook doesn't lock out a paying customer.
+const RENEWAL_SLACK_MS = 3 * 24 * 3600_000;
+const LICENSE_KEY = /^TS(-[A-Z2-9]{4}){3}$/;
+
+async function polar(env: Env, path: string, body: unknown): Promise<any> {
+  const res = await fetch(env.POLAR_API + path, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${env.POLAR_ACCESS_TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Polar ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  return res.json();
+}
+
+// The trial comes from the product's settings in Polar, which also refuses a second trial to the same customer.
+// With an email (a website account), the license shows on that account's page whatever email is typed at checkout.
+async function createCheckout(env: Env, successUrl: (key: string) => string, email?: string): Promise<{ url: string; key: string }> {
+  const key = newLicenseKey();
+  const checkout = await polar(env, '/v1/checkouts/', {
+    products: [env.POLAR_PRODUCT_ID],
+    // Polar copies this to the subscription, which is how the webhook knows the key and the account.
+    metadata: { license_key: key, ...(email && { account_email: email }) },
+    customer_email: email,
+    success_url: successUrl(key),
+  });
+  return { url: checkout.url, key };
+}
+
+const billingOff = (env: Env) => !env.POLAR_ACCESS_TOKEN || !env.POLAR_PRODUCT_ID;
+
+app.post('/api/billing/checkout', async (c) => {
+  if (billingOff(c.env)) return c.json({ ok: false, error: 'billing_unavailable' }, 503);
+  const origin = new URL(c.req.url).origin;
+  return c.json({ ok: true, ...(await createCheckout(c.env, (key) => `${origin}/billing/done?key=${key}`)) });
+});
+
+// The website's checkout. Body: { email, successUrl }. Admin-only because the caller picks where the
+// customer lands after paying and which account gets the license.
+app.post('/admin/checkout', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const body = await c.req.json<any>().catch(() => null);
+  const email = String(body?.email ?? '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^https?:\/\//.test(body?.successUrl)) return badRequest('email and successUrl required');
+  if (billingOff(c.env)) return c.json({ ok: false, error: 'billing_unavailable' }, 503);
+  return c.json({ ok: true, url: (await createCheckout(c.env, () => body.successUrl, email)).url });
+});
+
+// Body: { key, returnUrl? }.
+app.post('/admin/portal', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const body = await c.req.json<any>().catch(() => null);
+  const license = await c.env.DB.prepare('SELECT polar_customer_id FROM licenses WHERE key = ?').bind(String(body?.key ?? '')).first<any>();
+  if (!license?.polar_customer_id) return c.json({ ok: false, error: 'no_subscription' }, 404);
+  const session = await polar(c.env, '/v1/customer-sessions/', { customer_id: license.polar_customer_id, return_url: body.returnUrl });
+  return c.json({ ok: true, url: session.customer_portal_url });
+});
+
+// Shows the key in the browser too, in case the app was closed before the payment went through.
+app.get('/billing/done', (c) => {
+  const key = c.req.query('key') ?? '';
+  return c.html(`<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>${c.env.APP_NAME}</title>
+<body style="background:#0a0b0f;color:#eef1f6;font:16px/1.6 -apple-system,system-ui,sans-serif;max-width:480px;margin:15vh auto;padding:0 20px">
+<h1>You're all set</h1><p>Go back to ${c.env.APP_NAME}. It unlocks by itself within a few seconds.</p>
+${LICENSE_KEY.test(key) ? `<p>Your license key, if the app asks for it:<br><code style="font-size:20px">${key}</code></p>` : ''}</body>`);
+});
+
+// Body: { token }. Only a computer that is active on the license gets its portal link.
+app.post('/api/billing/portal', async (c) => {
+  const body = await c.req.json<any>().catch(() => null);
+  const claims = body?.token ? await verifyToken(c.env, String(body.token)) : null;
+  if (!hasValidClaims(claims)) return c.json({ ok: false, error: 'invalid_token' }, 401);
+  const license = await c.env.DB
+    .prepare('SELECT l.polar_customer_id FROM licenses l JOIN activations a ON a.license_key = l.key WHERE l.key = ? AND a.device_id = ? AND a.revoked_at IS NULL')
+    .bind(claims.k, claims.d)
+    .first<any>();
+  if (!license?.polar_customer_id) return c.json({ ok: false, error: 'no_subscription' }, 404);
+  const session = await polar(c.env, '/v1/customer-sessions/', { customer_id: license.polar_customer_id });
+  return c.json({ ok: true, url: session.customer_portal_url });
+});
+
+// Standard Webhooks: HMAC-SHA256 over "id.timestamp.body", keyed with the base64 part of the whsec_ secret.
+async function isFromPolar(env: Env, headers: Headers, raw: string): Promise<boolean> {
+  const id = headers.get('webhook-id'), timestamp = headers.get('webhook-timestamp'), signatures = headers.get('webhook-signature');
+  if (!env.POLAR_WEBHOOK_SECRET || !id || !timestamp || !signatures) return false;
+  // Stops a captured request being replayed later.
+  if (!(Math.abs(Date.now() / 1000 - Number(timestamp)) <= 300)) return false;
+  try {
+    const secret = b64urlToBytes(env.POLAR_WEBHOOK_SECRET.replace(/^whsec_/, ''));
+    const key = await crypto.subtle.importKey('raw', secret as BufferSource, { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    const signed = new TextEncoder().encode(`${id}.${timestamp}.${raw}`);
+    for (const signature of signatures.split(' ')) {
+      const [version, value] = signature.split(',');
+      // The header is a list (key rotation), so one unreadable entry must not hide a good one after it.
+      try {
+        if (version === 'v1' && value && await crypto.subtle.verify('HMAC', key, b64urlToBytes(value) as BufferSource, signed)) return true;
+      } catch { /* not base64: no match */ }
+    }
+  } catch { /* a malformed secret is a refusal */ }
+  return false;
+}
+
+app.post('/webhooks/polar', async (c) => {
+  const raw = await c.req.text();
+  if (!(await isFromPolar(c.env, c.req.raw.headers, raw))) return c.text('bad signature', 403);
+  const event = JSON.parse(raw);
+  const sub = event.data;
+  // Every subscription.* event carries the whole subscription, so they are all handled the same way.
+  if (!String(event.type).startsWith('subscription.') || sub?.product_id !== c.env.POLAR_PRODUCT_ID) return c.json({ ok: true, ignored: true }, 202);
+
+  const at = Date.parse(event.timestamp);
+  const entitled = sub.status === 'trialing' || sub.status === 'active';
+  // During a trial the current period is the trial. A failed card gets the same few days to be fixed;
+  // anything else (canceled, unpaid, paused, never paid) ends access now.
+  const expiresAt = entitled ? Date.parse(sub.current_period_end) + RENEWAL_SLACK_MS
+    : sub.status === 'past_due' ? Date.parse(sub.current_period_start) + RENEWAL_SLACK_MS
+    : at;
+  const key = LICENSE_KEY.test(sub.metadata?.license_key) ? sub.metadata.license_key : newLicenseKey();
+  await c.env.DB.batch([
+    c.env.DB
+      .prepare('UPDATE licenses SET email = ?, expires_at = ?, polar_event_at = ? WHERE polar_subscription_id = ? AND polar_event_at <= ?')
+      .bind(sub.customer.email, expiresAt, at, sub.id, at),
+    // First sight of the subscription. Ignored once its row exists, and never made for one that isn't paid or on trial.
+    ...(entitled ? [c.env.DB
+      .prepare('INSERT OR IGNORE INTO licenses (key, email, plan, expires_at, polar_subscription_id, polar_customer_id, polar_event_at, account_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(key, sub.customer.email, SUBSCRIPTION_PLAN, expiresAt, sub.id, sub.customer_id, at, sub.metadata?.account_email ?? null)] : []),
+  ]);
+  return c.json({ ok: true }, 202);
+});
+
 // ───────────────────────────────────────────────── telemetry endpoints
 
 // Checks the signed token on a telemetry request. Trusts licenseKey + deviceId from the token
@@ -308,6 +455,22 @@ app.get('/admin/licenses', async (c) => {
     .prepare(`SELECT l.*, (SELECT COUNT(*) FROM activations a WHERE a.license_key = l.key AND a.revoked_at IS NULL) AS active_devices FROM licenses l ORDER BY l.created_at DESC`)
     .all();
   return c.json({ ok: true, licenses: results });
+});
+
+// The license for a website account, or null. `error` is why the app would refuse it, if it would.
+// A subscription only counts if that account started it: accounts don't prove they own their email, so
+// matching a subscription bought in the app by email alone would hand its key and billing page to a stranger.
+app.get('/admin/license', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const { results } = await c.env.DB
+    .prepare(`SELECT l.*, p.ends_at AS plan_ends_at, (SELECT COUNT(*) FROM activations a WHERE a.license_key = l.key AND a.revoked_at IS NULL) AS active_devices
+      FROM licenses l LEFT JOIN plan_ends p ON p.plan = l.plan
+      WHERE (l.polar_subscription_id IS NULL AND lower(l.email) = ?1) OR lower(l.account_email) = ?1 ORDER BY l.created_at DESC`)
+    .bind(String(c.req.query('email') ?? '').trim().toLowerCase())
+    .all<any>();
+  // A working license first (a subscriber can still have an older free one), otherwise the newest.
+  const license = results.find((l) => !licenseError(l)) ?? results[0] ?? null;
+  return c.json({ ok: true, license: license && { ...license, error: licenseError(license) } });
 });
 
 // Every computer currently using a license, for the admin page.

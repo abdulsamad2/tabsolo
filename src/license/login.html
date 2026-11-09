@@ -18,6 +18,9 @@
     button { font-family: inherit; margin-top: 20px; width: 100%; padding: 12px; background: #1971c2; color: #fff; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
     button:hover { background: #145a9c; }
     button:disabled { background: #333a46; color: #a4acb8; cursor: not-allowed; }
+    button.secondary { margin-top: 10px; background: transparent; border: 1px solid #22283a; color: #eef1f6; }
+    button.secondary:hover { background: #1b2130; }
+    button.secondary:disabled { background: transparent; color: #6b7380; }
     .status { margin-top: 14px; min-height: 20px; font-size: 13px; }
     .status.ok { color: #7bd297; }
     .status.err { color: #f5caca; }
@@ -34,13 +37,14 @@
       <span>TabSolo</span>
     </div>
     <h1>Activate your license</h1>
-    <p>Paste the license key from your account page. It works on a limited number of computers.</p>
+    <p>Paste your license key, or start a subscription. New subscribers get a free trial.</p>
 
     <form id="form">
       <label for="key">License key</label>
       <input id="key" placeholder="TS-XXXX-XXXX-XXXX" autocomplete="off" autofocus>
       <button id="submit" type="submit">Activate</button>
     </form>
+    <button id="subscribe" class="secondary" type="button">Start free trial</button>
     <div class="status" id="status"></div>
     <div class="device" id="device"></div>
 
