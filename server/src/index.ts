@@ -257,7 +257,8 @@ app.post('/api/license/deactivate', async (c) => {
 // The app asks for a checkout link and gets a new key with it; the key starts working when Polar's
 // webhook reports the subscription, which is what the app waits for.
 
-const SUBSCRIPTION_PLAN = 'solo';
+// The plan name follows the seats: one computer is "solo", more is "team".
+const planFor = (seats: number) => (seats > 1 ? 'team' : 'solo');
 // Past the paid period, so a late renewal webhook doesn't lock out a paying customer.
 const RENEWAL_SLACK_MS = 3 * 24 * 3600_000;
 const LICENSE_KEY = /^TS(-[A-Z2-9]{4}){3}$/;
@@ -375,14 +376,26 @@ app.post('/webhooks/polar', async (c) => {
     : sub.status === 'past_due' ? Date.parse(sub.current_period_start) + RENEWAL_SLACK_MS
     : at;
   const key = LICENSE_KEY.test(sub.metadata?.license_key) ? sub.metadata.license_key : newLicenseKey();
+  // On the per-seat price a seat is a computer, and the customer can change the number later in Polar's portal.
+  // This overwrites a device limit set by hand in the admin panel: what is paid for decides.
+  const seats = Number.isInteger(sub.seats) && sub.seats > 0 ? sub.seats : 1;
   await c.env.DB.batch([
     c.env.DB
-      .prepare('UPDATE licenses SET email = ?, expires_at = ?, polar_event_at = ? WHERE polar_subscription_id = ? AND polar_event_at <= ?')
-      .bind(sub.customer.email, expiresAt, at, sub.id, at),
+      .prepare('UPDATE licenses SET email = ?, expires_at = ?, polar_event_at = ?, max_devices = ?, plan = ? WHERE polar_subscription_id = ? AND polar_event_at <= ?')
+      .bind(sub.customer.email, expiresAt, at, seats, planFor(seats), sub.id, at),
     // First sight of the subscription. Ignored once its row exists, and never made for one that isn't paid or on trial.
     ...(entitled ? [c.env.DB
-      .prepare('INSERT OR IGNORE INTO licenses (key, email, plan, expires_at, polar_subscription_id, polar_customer_id, polar_event_at, account_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(key, sub.customer.email, SUBSCRIPTION_PLAN, expiresAt, sub.id, sub.customer_id, at, sub.metadata?.account_email ?? null)] : []),
+      .prepare('INSERT OR IGNORE INTO licenses (key, email, plan, max_devices, expires_at, polar_subscription_id, polar_customer_id, polar_event_at, account_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(key, sub.customer.email, planFor(seats), seats, expiresAt, sub.id, sub.customer_id, at, sub.metadata?.account_email ?? null)] : []),
+    // Seats were reduced below the computers in use: the most recently used ones keep working. It reads the
+    // limit the license ended up with, so a late retry of an older event can't remove computers either.
+    c.env.DB
+      .prepare(`UPDATE activations SET revoked_at = ?1 WHERE revoked_at IS NULL
+        AND license_key = (SELECT key FROM licenses WHERE polar_subscription_id = ?2)
+        AND device_id NOT IN (SELECT device_id FROM activations
+          WHERE revoked_at IS NULL AND license_key = (SELECT key FROM licenses WHERE polar_subscription_id = ?2)
+          ORDER BY last_seen_at DESC LIMIT COALESCE((SELECT max_devices FROM licenses WHERE polar_subscription_id = ?2), 0))`)
+      .bind(Date.now(), sub.id),
   ]);
   return c.json({ ok: true }, 202);
 });

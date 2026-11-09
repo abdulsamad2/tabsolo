@@ -28,8 +28,9 @@ Plans: `solo` (1 device), `pro` (3 devices), `team` (set `max_devices` yourself)
 
 ## Subscriptions and free trials (Polar)
 
-Polar takes the payments and runs the trial; each subscription shows up here as a `solo` license (1 computer) that
-expires when the subscription does. In the app, "Start free trial" opens the Polar checkout and unlocks when it is paid.
+Polar takes the payments and runs the trial; each subscription shows up here as a license that expires when the
+subscription does. The product is priced per seat and a seat is a computer: the license's device limit follows the
+seats the customer pays for (plan `solo` for one, `team` for more), including when they change it in Polar's portal. In the app, "Start free trial" opens the Polar checkout and unlocks when it is paid.
 
 One-time setup, first in the Polar sandbox (https://sandbox.polar.sh), then again for live:
 

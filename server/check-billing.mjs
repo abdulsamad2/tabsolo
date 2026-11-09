@@ -1,5 +1,5 @@
 // Self-check for the Polar webhook: signature, license creation, late retries, cancellation. It changes data, so it only runs against a local server:
-//   npx wrangler dev --local --port 8799 --var ADMIN_TOKEN:local-test-token --var POLAR_PRODUCT_ID:prod-test --var POLAR_WEBHOOK_SECRET:whsec_$(printf local-test-webhook-secret | base64)
+//   npx wrangler dev --local --port 8799 --var ADMIN_TOKEN:local-test-token --var POLAR_PRODUCT_ID:prod-test --var POLAR_WEBHOOK_SECRET:whsec_$(printf local-test-webhook-secret | base64) --var "TOKEN_SIGNING_JWK:$(node -p "JSON.stringify(crypto.generateKeyPairSync('ed25519').privateKey.export({format:'jwk'}))")"
 //   node check-billing.mjs
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -73,6 +73,21 @@ license = await accountLicense();
 assert.deepEqual([license.plan, license.error, license.polar_subscription_id, license.active_devices, license.email], ['solo', null, siteSub.id, 0, 'buyer@example.com'], 'the working subscription wins over the ended free license');
 assert.equal((await (await admin('/admin/license?email=buyer@example.com')).json()).license, null, 'a subscription bought in the app is not handed to an account with the same email');
 await admin('/admin/plan-end', { plan: 'beta', endsAt: null });
+
+// Seats: each one is a computer. Buying three allows three; dropping to one keeps only the most recently used.
+const teamSub = { ...sub(), id: `team-${run}`, status: 'active', seats: 3, metadata: {} };
+await send('subscription.created', teamSub, { at: Date.now() - 5000 });
+const team = await licenseFor(teamSub.id);
+assert.deepEqual([team.plan, team.max_devices], ['team', 3]);
+const activate = (deviceId) => fetch(`${base}/api/license/activate`, { method: 'POST', body: JSON.stringify({ key: team.key, deviceId }) });
+for (const device of ['pc-1', 'pc-2', 'pc-3']) assert.equal((await activate(device)).status, 200, `${device} fits in three seats`);
+assert.equal((await activate('pc-4')).status, 403, 'a fourth computer needs a fourth seat');
+const inUse = async () => (await (await admin('/admin/activations')).json()).activations.filter((a) => a.license_key === team.key).map((a) => a.device_id);
+await send('subscription.updated', { ...teamSub, seats: 1 }, { at: Date.now() - 6000 });
+assert.equal((await inUse()).length, 3, 'a late retry of an older event removes no computers');
+await send('subscription.updated', { ...teamSub, seats: 1 }, { at: Date.now() });
+assert.deepEqual([(await licenseFor(teamSub.id)).max_devices, (await licenseFor(teamSub.id)).plan, (await inUse()).length], [1, 'solo', 1], 'one seat left, one computer left');
+assert.equal((await licenseFor(sub().id)).max_devices, 1, 'a subscription without seats is one computer');
 
 assert.equal((await fetch(`${base}/admin/license?email=${account}`)).status, 403, 'admin only');
 assert.equal((await admin('/admin/checkout', { email: account, successUrl: 'javascript:alert(1)' })).status, 400);
