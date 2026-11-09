@@ -1,12 +1,13 @@
 // Self-check for the Polar webhook: signature, license creation, late retries, cancellation. It changes data, so it only runs against a local server:
-//   npx wrangler dev --local --port 8799 --var ADMIN_TOKEN:local-test-token --var POLAR_PRODUCT_ID:prod-test --var POLAR_WEBHOOK_SECRET:whsec_bG9jYWwtdGVzdC13ZWJob29rLXNlY3JldA==
+//   npx wrangler dev --local --port 8799 --var ADMIN_TOKEN:local-test-token --var POLAR_PRODUCT_ID:prod-test --var POLAR_WEBHOOK_SECRET:whsec_$(printf local-test-webhook-secret | base64)
 //   node check-billing.mjs
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
 const base = process.env.API_BASE ?? 'http://localhost:8799';
 assert.equal(new URL(base).hostname, 'localhost', 'refusing to run against a non-local server');
-const secret = Buffer.from('bG9jYWwtdGVzdC13ZWJob29rLXNlY3JldA==', 'base64');
+// A made-up value for the local server above, never a real Polar secret. Spelled out so secret scanners don't mistake it for one.
+const secret = Buffer.from('local-test-webhook-secret');
 const day = 86_400_000;
 
 let n = 0;
