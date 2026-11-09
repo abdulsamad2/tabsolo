@@ -37,6 +37,8 @@ assert.equal((await current()).status, 'active');
 assert.equal((await current()).max_devices, 5, 'restoring must not touch the limit');
 
 const telemetry = await (await call('/admin/telemetry')).json();
-assert.ok(Array.isArray(telemetry.errors) && Array.isArray(telemetry.events));
+assert.ok(Array.isArray(telemetry.errors) && Array.isArray(telemetry.events) && Array.isArray(telemetry.recent));
+const none = await (await call(`/admin/telemetry?key=${license.key}`)).json();
+assert.deepEqual([none.errors, none.events, none.recent], [[], [], []], 'a new license has no telemetry, so ?key= must filter');
 assert.ok(Array.isArray((await (await call('/admin/plan-ends')).json()).planEnds));
 console.log('admin API checks passed');

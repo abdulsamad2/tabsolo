@@ -13,7 +13,7 @@
 //   POST /admin/plan-end         — admin-only: set the date a whole plan (e.g. the free beta) stops working
 //   GET  /admin/plan-ends        — admin-only: the plans with an end date
 //   POST /admin/license/update   — admin-only: restore a revoked license or change its device limit
-//   GET  /admin/telemetry        — admin-only: recent errors and the week's top events, as JSON
+//   GET  /admin/telemetry        — admin-only: recent errors and events, as JSON; ?key= for one license
 //   GET  /admin/dashboard        — admin-only: minimal HTML dashboard (recent errors + events)
 //
 // Signed activation token (returned by /activate, cached by the client, re-sent on /validate):
@@ -430,11 +430,15 @@ app.post('/admin/license/update', async (c) => {
 
 app.get('/admin/telemetry', async (c) => {
   const bad = requireAdmin(c); if (bad) return bad;
-  const [errors, events] = await Promise.all([
-    c.env.DB.prepare('SELECT id, kind, message, app_version, os, created_at FROM telemetry_errors ORDER BY created_at DESC LIMIT 50').all(),
-    c.env.DB.prepare('SELECT name, COUNT(*) AS n FROM telemetry_events WHERE created_at > ? GROUP BY name ORDER BY n DESC LIMIT 25').bind(Date.now() - 7 * 24 * 3600_000).all(),
+  const key = c.req.query('key') ?? null;
+  const since = Date.now() - 30 * 24 * 3600_000;
+  // The same three queries serve the whole app and one license: NULL matches everything.
+  const [errors, events, recent] = await Promise.all([
+    c.env.DB.prepare('SELECT id, license_key, kind, message, stack, app_version, os, created_at FROM telemetry_errors WHERE (?1 IS NULL OR license_key = ?1) ORDER BY created_at DESC LIMIT 50').bind(key).all(),
+    c.env.DB.prepare('SELECT name, COUNT(*) AS n, COUNT(DISTINCT license_key) AS users FROM telemetry_events WHERE (?1 IS NULL OR license_key = ?1) AND created_at > ?2 GROUP BY name ORDER BY n DESC LIMIT 30').bind(key, since).all(),
+    c.env.DB.prepare('SELECT id, license_key, name, app_version, os, created_at FROM telemetry_events WHERE (?1 IS NULL OR license_key = ?1) ORDER BY created_at DESC LIMIT 30').bind(key).all(),
   ]);
-  return c.json({ ok: true, errors: errors.results, events: events.results });
+  return c.json({ ok: true, errors: errors.results, events: events.results, recent: recent.results });
 });
 
 app.get('/admin/dashboard', async (c) => {
