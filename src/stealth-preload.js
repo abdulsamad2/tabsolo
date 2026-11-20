@@ -59,39 +59,45 @@ const seedRaw = seedArg ? seedArg.slice('--fleet-seed='.length) : '1';
 // Format gate so a future refactor that pipes a non-hex source (profile name, env var) into the
 // seed can't turn this inline interpolation into webFrame.executeJavaScript string injection.
 const seedHex = /^[0-9a-f]{1,16}$/i.test(seedRaw) ? seedRaw : '1';
+// The Sec-CH-UA brand list main.js puts on every request, base64 JSON of [[brand, version], ...].
+const brandsArg = process.argv.find((a) => typeof a === 'string' && a.startsWith('--fleet-brands='));
+const brandsRaw = brandsArg ? brandsArg.slice('--fleet-brands='.length) : '';
+const brandsB64 = /^[A-Za-z0-9+/=]*$/.test(brandsRaw) ? brandsRaw : '';
 
 webFrame.executeJavaScript(`
   (() => {
     const SEED = parseInt('${seedHex}', 16) || 1;
+    let BRANDS = [];
+    try { BRANDS = JSON.parse(atob('${brandsB64}')).map(([brand, version]) => ({ brand, version: String(version) })); } catch (_) {}
     // ----- Native-looking toString plumbing -----------------------------------------------------
     // Chrome's getters stringify as "function get <name>() { [native code] }". A naive patch leaves
     // our fake getters as "() => false", which fp-collect prints under navigatorPrototype and uses as
     // a tell. Proxying Function.prototype.toString lets our fakes return the native string instead.
     const nativeLabels = new WeakMap();
-    const asNative = (fn, label) => { nativeLabels.set(fn, label); return fn; };
-    try {
-      const originalToString = Function.prototype.toString;
-      const toStringProxy = new Proxy(originalToString, {
+    // Native functions also carry their name ("get language", "getParameter"); an empty name is a tell.
+    const asNative = (fn, label) => {
+      nativeLabels.set(fn, label);
+      try { Object.defineProperty(fn, 'name', { value: label.slice('function '.length, label.indexOf('(')) }); } catch (_) {}
+      return fn;
+    };
+    // A page can fetch a pristine Function.prototype.toString from a blank iframe and apply it to our
+    // fakes, so every same-origin realm gets the same masking proxy (built from that realm's own
+    // toString, so it still passes instanceof checks there).
+    const maskedRealms = new WeakSet();
+    const maskRealm = (win) => {
+      if (!win || maskedRealms.has(win)) return;
+      maskedRealms.add(win);
+      const original = win.Function.prototype.toString;
+      const proxy = new win.Proxy(original, {
         apply(target, thisArg, args) {
           if (thisArg && nativeLabels.has(thisArg)) return nativeLabels.get(thisArg);
           return Reflect.apply(target, thisArg, args);
         },
       });
-      nativeLabels.set(toStringProxy, 'function toString() { [native code] }');
-      Function.prototype.toString = toStringProxy;
-    } catch (_) {}
-
-    // ----- navigator.webdriver -----------------------------------------------------------------
-    // Stock Chrome exposes the property as a native getter returning false. Pre-patch Electron builds
-    // leave it absent on the prototype.
-    try {
-      const webdriverGetter = asNative(function () { return false; }, 'function get webdriver() { [native code] }');
-      Object.defineProperty(Navigator.prototype, 'webdriver', {
-        get: webdriverGetter,
-        configurable: true,
-        enumerable: true,
-      });
-    } catch (_) {}
+      nativeLabels.set(proxy, 'function toString() { [native code] }');
+      win.Function.prototype.toString = proxy;
+    };
+    try { maskRealm(window); } catch (_) {}
 
     // ----- navigator.language / languages -----------------------------------------------------
     // Every request's Accept-Language is forced to "en-US,en;q=0.9" (see main.js), but Chromium's
@@ -110,8 +116,8 @@ webFrame.executeJavaScript(`
     } catch (_) {}
 
     // ----- window.chrome.* ---------------------------------------------------------------------
-    // Stock Chrome on a regular page exposes chrome.app, chrome.csi, chrome.loadTimes, chrome.runtime,
-    // and chrome.webstore. The methods are callable but mostly inert without an extension context.
+    // Stock Chrome on a regular page exposes chrome.app, chrome.csi, chrome.loadTimes and chrome.runtime
+    // (chrome.webstore went in Chrome 76). The methods are callable but mostly inert without an extension context.
     try {
       if (!window.chrome) window.chrome = {};
       const chrome = window.chrome;
@@ -153,20 +159,13 @@ webFrame.executeJavaScript(`
           return { startE: Date.now(), onloadT: Date.now(), pageT: performance.now(), tran: 15 };
         }, 'function csi() { [native code] }');
       }
-      if (!chrome.webstore) {
-        chrome.webstore = {
-          install: asNative(function install() {}, 'function install() { [native code] }'),
-          onInstallStageChanged: {},
-          onDownloadProgress: {},
-        };
-      }
     } catch (_) {}
 
     // ----- iframe.contentWindow.chrome -------------------------------------------------------
     // bot.sannysoft HEADCHR_IFRAME and fp-collect iframeChrome create a blank same-origin iframe and
     // read iframe.contentWindow.chrome synchronously. Even with nodeIntegrationInSubFrames, our
     // preload may not have executed in that frame yet, so patch the contentWindow getter: whenever a
-    // page reads it, copy chrome and the webdriver getter into the child's main world. Only runs for
+    // page reads it, copy chrome into the child's main world and mask its toString. Only runs for
     // same-origin frames (cross-origin access throws and is caught).
     try {
       const descriptor = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
@@ -176,12 +175,7 @@ webFrame.executeJavaScript(`
           const win = originalGetter.call(this);
           try {
             if (win && !win.chrome) win.chrome = window.chrome;
-            if (win && win.Navigator && win.Navigator.prototype && !('webdriver' in win.Navigator.prototype)) {
-              Object.defineProperty(win.Navigator.prototype, 'webdriver', {
-                get: window.Object.getOwnPropertyDescriptor(Navigator.prototype, 'webdriver').get,
-                configurable: true, enumerable: true,
-              });
-            }
+            maskRealm(win);
           } catch (_) {}
           return win;
         }, 'function get contentWindow() { [native code] }');
@@ -200,6 +194,7 @@ webFrame.executeJavaScript(`
           try {
             const win = doc && doc.defaultView;
             if (win && !win.chrome) win.chrome = window.chrome;
+            maskRealm(win);
           } catch (_) {}
           return doc;
         }, 'function get contentDocument() { [native code] }');
@@ -252,11 +247,13 @@ webFrame.executeJavaScript(`
       { vendor: 'Google Inc. (Intel Inc.)', renderer: 'ANGLE (Intel Inc., Intel(R) Iris(TM) Plus Graphics 650, OpenGL 4.1)' },
     ];
     const combo = GPU_COMBOS[SEED % GPU_COMBOS.length];
+    // The combos are Macs: on Windows/Linux the real card is reported (a Windows UA with an Apple GPU
+    // is an instant flag).
     try {
       const patchGL = (proto) => {
-        if (!proto || !proto.getParameter) return;
+        if (!proto || !proto.getParameter || !navigator.platform.startsWith('Mac')) return;
         const originalGetParameter = proto.getParameter;
-        proto.getParameter = asNative(function (parameter) {
+        proto.getParameter = asNative(function getParameter(parameter) {
           // UNMASKED_VENDOR_WEBGL = 37445, UNMASKED_RENDERER_WEBGL = 37446
           if (parameter === 37445) return combo.vendor;
           if (parameter === 37446) return combo.renderer;
@@ -391,37 +388,10 @@ webFrame.executeJavaScript(`
         return ((h % 10000) / 10000 - 0.5) * 0.6;
       };
 
-      const originalMeasureText = CanvasRenderingContext2D.prototype.measureText;
-      CanvasRenderingContext2D.prototype.measureText = asNative(function measureText(text) {
-        const metrics = originalMeasureText.call(this, text);
-        const key = (this.font || '') + '|' + String(text);
-        const noise = fractionFor(key);
-        return new Proxy(metrics, {
-          get(target, prop) {
-            const value = Reflect.get(target, prop, target);
-            if (typeof value === 'number' && (
-              prop === 'width' || prop === 'actualBoundingBoxLeft' || prop === 'actualBoundingBoxRight'
-            )) {
-              return value + noise;
-            }
-            return typeof value === 'function' ? value.bind(target) : value;
-          },
-        });
-      }, 'function measureText() { [native code] }');
-
-      const noiseRect = (rect, key) => {
-        if (!rect) return rect;
-        const noise = fractionFor(key);
-        return new Proxy(rect, {
-          get(target, prop) {
-            const value = Reflect.get(target, prop, target);
-            if (typeof value === 'number' && (prop === 'width' || prop === 'right')) {
-              return value + noise;
-            }
-            return typeof value === 'function' ? value.bind(target) : value;
-          },
-        });
-      };
+      // measureText is left alone: TextMetrics can't be constructed, and a Proxy over it throws on
+      // the native getters (an "Illegal invocation" every tamper check looks for).
+      // A real DOMRect, not a Proxy: proxies fail structuredClone/postMessage and the native getters.
+      const noiseRect = (rect, key) => rect && new DOMRect(rect.x, rect.y, rect.width + fractionFor(key), rect.height);
 
       const originalElementRect = Element.prototype.getBoundingClientRect;
       Element.prototype.getBoundingClientRect = asNative(function getBoundingClientRect() {
@@ -441,57 +411,26 @@ webFrame.executeJavaScript(`
     } catch (_) {}
 
     // ----- navigator.userAgentData brands ----------------------------------------------------
-    // Chromium builds .brands from the compiled product name, so without patching it, JavaScript
-    // reads [{brand:"TabSolo", version:"1.3.10"}, {brand:"Chromium", ...}, {brand:"Not=A?Brand", ...}]
-    // even though our Sec-CH-UA header is clean. Rewrite the brands list and getHighEntropyValues.
+    // navigator.userAgentData is a fresh object on every read, so only the prototype can be patched.
+    // Brands come from main.js (the same list it puts in Sec-CH-UA); everything else in
+    // getHighEntropyValues stays real so it agrees with what Chromium would put in the headers.
     try {
-      const uaData = navigator.userAgentData;
-      if (uaData) {
-        const major = (navigator.userAgent.match(/Chrome\\/(\\d+)/) || [])[1] || '140';
-        const fullVersion = (navigator.userAgent.match(/Chrome\\/([\\d.]+)/) || [])[1] || '140.0.0.0';
-        const cleanBrands = [
-          { brand: 'Chromium', version: major },
-          { brand: 'Google Chrome', version: major },
-          { brand: 'Not=A?Brand', version: '24' },
-        ];
-        const cleanFullBrands = [
-          { brand: 'Chromium', version: fullVersion },
-          { brand: 'Google Chrome', version: fullVersion },
-          { brand: 'Not=A?Brand', version: '24.0.0.0' },
-        ];
-        const platform = navigator.platform === 'Win32' ? 'Windows' : navigator.platform.startsWith('Mac') ? 'macOS' : 'Linux';
-        Object.defineProperty(uaData, 'brands', {
-          get: asNative(function () { return cleanBrands.slice(); }, 'function get brands() { [native code] }'),
+      if (typeof NavigatorUAData !== 'undefined' && BRANDS.length) {
+        const fullVersion = (navigator.userAgent.match(/Chrome\\/([\\d.]+)/) || [])[1] || '';
+        const fullBrands = BRANDS.map(({ brand, version }) => ({ brand, version: brand === 'Chromium' || brand === 'Google Chrome' ? fullVersion : version + '.0.0.0' }));
+        const proto = NavigatorUAData.prototype;
+        Object.defineProperty(proto, 'brands', {
+          get: asNative(function () { return BRANDS.map((b) => ({ ...b })); }, 'function get brands() { [native code] }'),
           configurable: true, enumerable: true,
         });
-        Object.defineProperty(uaData, 'mobile', {
-          get: asNative(function () { return false; }, 'function get mobile() { [native code] }'),
-          configurable: true, enumerable: true,
-        });
-        Object.defineProperty(uaData, 'platform', {
-          get: asNative(function () { return platform; }, 'function get platform() { [native code] }'),
-          configurable: true, enumerable: true,
-        });
-        if (typeof uaData.getHighEntropyValues === 'function') {
-          uaData.getHighEntropyValues = asNative(function getHighEntropyValues(hints) {
-            const result = {
-              brands: cleanBrands.slice(),
-              mobile: false,
-              platform,
-              architecture: 'x86',
-              bitness: '64',
-              model: '',
-              platformVersion: platform === 'macOS' ? '15.0.0' : platform === 'Windows' ? '15.0.0' : '',
-              uaFullVersion: fullVersion,
-              fullVersionList: cleanFullBrands.slice(),
-              wow64: false,
-              formFactors: ['Desktop'],
-            };
-            const filtered = { brands: result.brands, mobile: result.mobile, platform: result.platform };
-            if (Array.isArray(hints)) for (const h of hints) if (h in result) filtered[h] = result[h];
-            return Promise.resolve(filtered);
-          }, 'function getHighEntropyValues() { [native code] }');
-        }
+        const originalHEV = proto.getHighEntropyValues;
+        proto.getHighEntropyValues = asNative(function getHighEntropyValues(hints) {
+          return originalHEV.call(this, hints).then((result) => {
+            result.brands = BRANDS.map((b) => ({ ...b }));
+            if ('fullVersionList' in result) result.fullVersionList = fullBrands.map((b) => ({ ...b }));
+            return result;
+          });
+        }, 'function getHighEntropyValues() { [native code] }');
       }
     } catch (_) {}
 
@@ -546,18 +485,5 @@ webFrame.executeJavaScript(`
       }
     } catch (_) {}
 
-    // ----- navigator.languages belt-and-suspenders -------------------------------------------
-    // --lang=en-US on the command line should settle this at the Chromium level, but override the
-    // JS getters too in case anything else in the stack re-reads the macOS system locale.
-    try {
-      Object.defineProperty(Navigator.prototype, 'language', {
-        get: asNative(function () { return 'en-US'; }, 'function get language() { [native code] }'),
-        configurable: true, enumerable: true,
-      });
-      Object.defineProperty(Navigator.prototype, 'languages', {
-        get: asNative(function () { return ['en-US', 'en']; }, 'function get languages() { [native code] }'),
-        configurable: true, enumerable: true,
-      });
-    } catch (_) {}
   })();
 `);

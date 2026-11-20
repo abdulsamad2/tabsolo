@@ -57,8 +57,15 @@ const UA_OS_TOKEN = process.platform === 'darwin'
     ? 'Windows NT 10.0; Win64; x64'
     : 'X11; Linux x86_64';
 const CLEAN_USER_AGENT = `Mozilla/5.0 (${UA_OS_TOKEN}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_FULL_VERSION} Safari/537.36`;
-const CH_UA_BRANDS = `"Chromium";v="${CHROME_MAJOR_VERSION}", "Google Chrome";v="${CHROME_MAJOR_VERSION}", "Not=A?Brand";v="24"`;
-const CH_UA_FULL = `"Chromium";v="${CHROME_FULL_VERSION}", "Google Chrome";v="${CHROME_FULL_VERSION}", "Not=A?Brand";v="24.0.0.0"`;
+// Chromium's GREASE brand for this major version (embedder_support/user_agent_utils.cc), so the list
+// matches what this build's navigator.userAgentData already reports, plus the Google Chrome brand.
+const GREASE_CHARS = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_'];
+const GREASE_BRAND = `Not${GREASE_CHARS[CHROME_MAJOR_VERSION % 11]}A${GREASE_CHARS[(Number(CHROME_MAJOR_VERSION) + 1) % 11]}Brand`;
+const GREASE_VERSION = ['8', '99', '24'][CHROME_MAJOR_VERSION % 3];
+const CH_BRANDS = [[GREASE_BRAND, GREASE_VERSION], ['Chromium', CHROME_MAJOR_VERSION], ['Google Chrome', CHROME_MAJOR_VERSION]];
+const chHeader = (list) => list.map(([brand, version]) => `"${brand}";v="${version}"`).join(', ');
+const CH_UA_BRANDS = chHeader(CH_BRANDS);
+const CH_UA_FULL = chHeader([[GREASE_BRAND, `${GREASE_VERSION}.0.0.0`], ['Chromium', CHROME_FULL_VERSION], ['Google Chrome', CHROME_FULL_VERSION]]);
 const CH_UA_PLATFORM = process.platform === 'darwin' ? '"macOS"' : process.platform === 'win32' ? '"Windows"' : '"Linux"';
 app.userAgentFallback = CLEAN_USER_AGENT;
 // Force Chromium's UI language so navigator.language / navigator.languages don't leak the macOS system
@@ -87,9 +94,10 @@ function partitionSeed(partition) {
   return (hash >>> 0).toString(16);
 }
 
-// Rewrites the TabSolo/Electron tokens out of request headers for a session. Chromium builds Sec-CH-UA
-// from the product name set at compile time, so onBeforeSendHeaders is the only reliable place to
-// override it. Idempotent: each session is patched once; later calls for the same session are no-ops.
+// Rewrites the TabSolo/Electron tokens out of request headers for a session. Electron sends no
+// Sec-CH-UA client hints at all (none on any request, with or without a UA override), and a Chrome UA
+// without them is a one-line bot check, so the three low-entropy hints Chrome sends on every https
+// request are added here, first in the header list like Chrome orders them. Idempotent: each session is patched once; later calls for the same session are no-ops.
 // Also installs a default-deny permission handler so sites can't silently get mic/camera/geolocation
 // — Electron's default-allow leaks mic/camera device labels (incl. "iPhone Microphone"), identifies
 // the user's hardware, and shows up as "Audio/Video Permissions: Granted Permanently" on fingerprint
@@ -100,14 +108,15 @@ function stealthifySession(ses) {
   stealthedSessions.add(ses);
   try { ses.setUserAgent(CLEAN_USER_AGENT); } catch {}
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
-    const headers = { ...details.requestHeaders };
-    for (const key of Object.keys(headers)) {
+    const headers = details.url.startsWith('https://')
+      ? { 'sec-ch-ua': CH_UA_BRANDS, 'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': CH_UA_PLATFORM }
+      : {};
+    for (const [key, value] of Object.entries(details.requestHeaders)) {
       const lower = key.toLowerCase();
       if (lower === 'user-agent') headers[key] = CLEAN_USER_AGENT;
-      else if (lower === 'sec-ch-ua') headers[key] = CH_UA_BRANDS;
-      else if (lower === 'sec-ch-ua-full-version-list') headers[key] = CH_UA_FULL;
-      else if (lower === 'sec-ch-ua-platform') headers[key] = CH_UA_PLATFORM;
       else if (lower === 'accept-language') headers[key] = CLEAN_ACCEPT_LANGUAGE;
+      else if (lower === 'sec-ch-ua-full-version-list') headers[key] = CH_UA_FULL;
+      else if (!lower.startsWith('sec-ch-ua')) headers[key] = value;
     }
     callback({ requestHeaders: headers });
   });
@@ -1218,7 +1227,8 @@ function createView(tab) {
       nodeIntegrationInSubFrames: true,
       // Hands the preload a stable per-session fingerprint seed so canvas noise and the picked WebGL
       // vendor/renderer stay the same for every tab in this profile across reloads.
-      additionalArguments: [`--fleet-seed=${partitionSeed(tab.partition)}`],
+      // --fleet-brands is the Sec-CH-UA list above, so navigator.userAgentData says the same thing.
+      additionalArguments: [`--fleet-seed=${partitionSeed(tab.partition)}`, `--fleet-brands=${Buffer.from(JSON.stringify(CH_BRANDS)).toString('base64')}`],
     },
   });
   const contents = view.webContents;
