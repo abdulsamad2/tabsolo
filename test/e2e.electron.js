@@ -39,8 +39,9 @@ const proxy = http.createServer((req, res) => {
     return;
   }
   if (req.url.endsWith('/favicon.ico')) {
-    res.writeHead(404);
-    res.end();
+    faviconUsers.push(user);
+    res.writeHead(200, { 'content-type': 'image/png' });
+    res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'));
     return;
   }
   const cookie = /visitor=(\w+)/.exec(req.headers.cookie ?? '')?.[1] ?? null;
@@ -54,6 +55,8 @@ const proxy = http.createServer((req, res) => {
 });
 
 const users = () => new Set(requests.map((r) => r.user));
+/** Which proxy session fetched each site icon. */
+const faviconUsers = [];
 const tzLookups = [];
 
 // A stand-in for Automatiq Sync's Get Orders API: checks the auth headers, filters and pages.
@@ -171,6 +174,14 @@ app.whenReady().then(async () => {
     await waitFor(() => users().size >= 2, 'two tab sessions');
     assert.ok([...users()].every((u) => u.startsWith('u-us-')), 'tabs start in the first region');
     results.sessions = [...users()];
+
+    // Site icons reach the tab bar as data, fetched by the tab's own proxy session. The bar's window has
+    // no proxy, so an icon it loaded itself would show this computer's address to the site.
+    const uiErrors = [];
+    win.webContents.on('console-message', (event) => { if (event.level === 'error') uiErrors.push(event.message); });
+    await waitFor(() => ui(`[...document.querySelectorAll('.tab .favicon')].some((img) => !img.hidden && img.src.startsWith('data:image/png') && img.naturalWidth > 0)`), 'a site icon in the tab bar');
+    assert.ok(faviconUsers.length > 0 && faviconUsers.every((u) => results.sessions.includes(u)), 'icons are fetched through the tab sessions');
+    assert.deepEqual(uiErrors.filter((m) => m.includes('Content Security Policy')), [], 'the tab bar loads its own images');
 
     // Burn IP: the reload carries the old cookie; the burn arrives on a new session with no cookie.
     const firstUser = await waitFor(async () => {

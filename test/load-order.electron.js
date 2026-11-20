@@ -16,6 +16,8 @@ const requests = []; // { start, end, tab }
 let active = 0;
 let maxActive = 0;
 const server = http.createServer((req, res) => {
+  // Site icons are fetched after a page loads; only page loads are being counted here.
+  if (req.url.endsWith('/favicon.ico')) return res.writeHead(404).end();
   const entry = { start: Date.now(), end: null, tab: new URL(req.url, 'http://x').searchParams.get('t') };
   requests.push(entry);
   maxActive = Math.max(maxActive, ++active);

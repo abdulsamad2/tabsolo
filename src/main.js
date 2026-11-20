@@ -1278,15 +1278,21 @@ function createView(tab) {
   for (const event of ['page-title-updated', 'did-navigate', 'did-navigate-in-page', 'did-stop-loading']) {
     contents.on(event, update);
   }
-  contents.on('page-favicon-updated', (_event, favicons) => {
+  contents.on('page-favicon-updated', async (_event, favicons) => {
     if (!current()) return;
-    tab.favicon = Array.isArray(favicons) && favicons.length > 0 ? favicons[0] : null;
+    const source = Array.isArray(favicons) && favicons.length > 0 ? favicons[0] : null;
+    tab.faviconSource = source;
+    const icon = await faviconDataURL(contents.session, source);
+    // The tab may have moved on, or got a newer icon, while this one was downloading.
+    if (!current() || tab.faviconSource !== source) return;
+    tab.favicon = icon;
     sendState();
   });
   // Clear the favicon on navigation so a fast-nav flash from the previous site doesn't linger.
   contents.on('did-start-navigation', (details) => {
     if (!current() || !details.isMainFrame || details.isSameDocument) return;
     tab.favicon = null;
+    tab.faviconSource = null;
     // about:blank is only the document the timezone override needs before the real page.
     if (details.url !== 'about:blank') reapplyPageClock(tab);
   });
@@ -3107,6 +3113,24 @@ const STATE_INTERVAL_MS = 100;
 let stateTimer = null;
 let lastStateAt = 0;
 let lastStateJSON = '';
+
+// A site's icon as a data: URL, downloaded by the tab's own session. The tab bar must not load the
+// address itself: that request would leave from this computer without the tab's proxy or cookies.
+// shortcut: icons over 50 KB are dropped (every tab's icon travels with each state update), raise if real sites need it.
+const FAVICON_MAX_BYTES = 50_000;
+async function faviconDataURL(tabSession, url) {
+  if (typeof url !== 'string') return null;
+  if (url.startsWith('data:image/')) return url.length <= FAVICON_MAX_BYTES * 1.4 ? url : null;
+  if (!/^https?:\/\//.test(url)) return null;
+  try {
+    const res = await tabSession.fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok || Number(res.headers.get('content-length')) > FAVICON_MAX_BYTES) return null;
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length === 0 || bytes.length > FAVICON_MAX_BYTES) return null;
+    const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+    return `data:${type.startsWith('image/') ? type : 'image/x-icon'};base64,${bytes.toString('base64')}`;
+  } catch { return null; }
+}
 
 function sendState() {
   if (stateTimer) return;
