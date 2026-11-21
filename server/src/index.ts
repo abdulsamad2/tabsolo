@@ -316,6 +316,33 @@ app.post('/admin/portal', async (c) => {
   return c.json({ ok: true, url: session.customer_portal_url });
 });
 
+// A coupon the customer types at Polar's checkout. Body: { code, percent, months, uses }.
+// months: 0 = every payment, 1 = the first payment only, otherwise that many months.
+app.post('/admin/discount', async (c) => {
+  const bad = requireAdmin(c); if (bad) return bad;
+  const body = await c.req.json<any>().catch(() => null);
+  const code = String(body?.code ?? '').trim().toUpperCase();
+  const { percent, months, uses } = body ?? {};
+  const whole = (n: unknown, min: number, max: number) => Number.isInteger(n) && (n as number) >= min && (n as number) <= max;
+  if (!/^[A-Z0-9]{3,20}$/.test(code) || !whole(percent, 1, 100) || !whole(months, 0, 24) || !whole(uses, 1, 10000)) {
+    return badRequest('code (3-20 letters or digits), percent 1-100, months 0-24, uses 1-10000');
+  }
+  if (billingOff(c.env)) return c.json({ ok: false, error: 'billing_unavailable' }, 503);
+  try {
+    const discount = await polar(c.env, '/v1/discounts/', {
+      name: `${code}: ${percent}% off`, code, type: 'percentage', basis_points: percent * 100,
+      ...(months === 0 ? { duration: 'forever' } : months === 1 ? { duration: 'once' } : { duration: 'repeating', duration_in_months: months }),
+      max_redemptions: uses,
+      // Only this product, so a code can't be spent on anything else the organization sells.
+      products: [c.env.POLAR_PRODUCT_ID],
+    });
+    return c.json({ ok: true, code: discount.code });
+  } catch (error: any) {
+    // Polar refuses a code that already exists.
+    return c.json({ ok: false, error: 'discount_refused', detail: String(error?.message ?? error).slice(0, 300) }, 502);
+  }
+});
+
 // Shows the key in the browser too, in case the app was closed before the payment went through.
 app.get('/billing/done', (c) => {
   const key = c.req.query('key') ?? '';

@@ -93,6 +93,10 @@ assert.equal((await fetch(`${base}/admin/license?email=${account}`)).status, 403
 assert.equal((await admin('/admin/checkout', { email: account, successUrl: 'javascript:alert(1)' })).status, 400);
 assert.equal((await admin('/admin/checkout', { email: account, successUrl: 'https://www.tabsolo.com/account' })).status, 503, 'no Polar token locally');
 assert.equal((await admin('/admin/portal', { key: 'TS-NOPE-NOPE-NOPE' })).status, 404);
+assert.equal((await admin('/admin/discount', { code: 'no spaces!', percent: 20, months: 1, uses: 1 })).status, 400);
+assert.equal((await admin('/admin/discount', { code: 'SAVE20', percent: 101, months: 1, uses: 1 })).status, 400);
+assert.equal((await admin('/admin/discount', { code: 'SAVE20', percent: 20, months: 3, uses: 5 })).status, 503, 'no Polar token locally');
+assert.equal((await fetch(`${base}/admin/discount`, { method: 'POST', body: '{}' })).status, 403, 'admin only');
 assert.equal((await fetch(`${base}/api/billing/checkout`, { method: 'POST' })).status, 503, 'no Polar token locally');
 assert.equal((await fetch(`${base}/api/billing/portal`, { method: 'POST', body: '{"token":"x.y"}' })).status, 401);
 const page = await (await fetch(`${base}/billing/done?key=${encodeURIComponent('<script>alert(1)</script>')}`)).text();

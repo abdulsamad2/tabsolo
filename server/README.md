@@ -36,7 +36,7 @@ One-time setup, first in the Polar sandbox (https://sandbox.polar.sh), then agai
 
 1. Create a subscription product and set its price. Do not add a trial period.
 2. Put the product's ID in `POLAR_PRODUCT_ID` in `wrangler.toml` (and `POLAR_API` to `https://api.polar.sh` for live).
-3. Create an organization access token with `checkouts:write` and `customer_sessions:write`: `npx wrangler secret put POLAR_ACCESS_TOKEN`
+3. Create an organization access token with `checkouts:write`, `customer_sessions:write` and `discounts:write` (for the admin panel's coupons): `npx wrangler secret put POLAR_ACCESS_TOKEN`
 4. Add a webhook endpoint for `https://tabsolo-api.<account>.workers.dev/webhooks/polar` with the `subscription.created`
    and `subscription.updated` events, then: `npx wrangler secret put POLAR_WEBHOOK_SECRET` (the `whsec_…` value).
 5. `npm run db:migrate:prod && npm run deploy`
