@@ -539,6 +539,9 @@ app.whenReady().then(async () => {
     results.fillNext = await ui(`window.fleet.invoke('autofillSubmit', undefined, 0)`);
     assert.equal(results.fillNext.submitted, 'Continue', JSON.stringify(results.fillNext));
     await waitFor(() => signin.executeJavaScript('window.clicks.length === 1'), 'button clicked');
+    // A site must see a person: a real click at a real spot, after the pointer moved there.
+    const press = await signin.executeJavaScript('({ ...window.clicks[0], moves: window.moves })');
+    assert.ok(press.trusted && press.x > 0 && press.y > 0 && press.moves > 0, `button pressed with real input: ${JSON.stringify(press)}`);
 
     // Popups: web pages open as tabs, local files never do.
     const page = signin;

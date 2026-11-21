@@ -680,6 +680,8 @@ function buildAutofillScript(profile, card, extras = {}) {
     // matches those digits to the profile's card and fills that card's CVV.
     cvvByLast4: cvvByLast4(profile.cards),
     cardHintLast4: extras.cardHintLast4 ?? '',
+    // Human mode (main.js typePlanned): text fields are listed for real key presses instead of being set here.
+    human: Boolean(extras.human),
   };
   // OTP-only fill (the auto-OTP watcher): blank every value but the one-time code, so inserting the
   // arrived code never re-touches the rest of the form.
@@ -688,6 +690,7 @@ function buildAutofillScript(profile, card, extras = {}) {
       if (key === 'otp') continue;
       values[key] = typeof values[key] === 'boolean' ? false
         : (values[key] && typeof values[key] === 'object' ? {} : '');
+      if (key === 'human') values[key] = Boolean(extras.human);
     }
   }
   return `(${pageAutofill.toString()})(${JSON.stringify(values)})`;
@@ -790,6 +793,7 @@ function pageAutofill(values) {
   };
 
   /** Sets a value in a way React/Vue controlled inputs accept, then fires the events a form expects. */
+  if (values.human) globalThis.__tsTyping = [];
   const COUNTRY_NAMES = { us: ['united states', 'united states of america', 'usa', 'us'], ca: ['canada', 'can', 'ca'] };
   const setValue = (el, value, alternatives = []) => {
     if (el instanceof HTMLSelectElement) {
@@ -804,6 +808,8 @@ function pageAutofill(values) {
       el.dispatchEvent(new Event('change', { bubbles: true }));
       return true;
     }
+    // Runs in an isolated world in human mode, so the page can't see this list.
+    if (values.human) { globalThis.__tsTyping.push({ el, value: String(value) }); return true; }
     try { el.focus(); } catch {}
     const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
     if (setter) setter.call(el, String(value));
@@ -928,7 +934,9 @@ function pageAutofill(values) {
 }
 
 /** Script to run in-page: finds the best primary-action button and clicks it. */
-function pageSubmit() {
+function pageSubmit(human) {
+  // Human mode: the button is remembered for a real mouse click from main.js instead of el.click().
+  const press = (el) => { if (human) globalThis.__tsPress = el; else el.click(); };
   const EXPAND = /^\s*(\+\s*)?(add(\s+(new|another))?\s+(address|card|payment|contact)|new\s+(address|card))\s*$/i;
   const PRIMARY = /^(continue|next|save|submit|confirm|proceed|place\s+order|checkout|book|buy|pay|update|add|done)$/i;
   const LOGIN = /^(log\s*in|sign\s*in|signin|login)$/i;
@@ -949,7 +957,7 @@ function pageSubmit() {
   });
   if (fields.length === 0) {
     const expand = allClickable().find((el) => EXPAND.test(textOf(el)));
-    if (expand) { expand.click(); return { expanded: textOf(expand) }; }
+    if (expand) { press(expand); return { expanded: textOf(expand) }; }
     return { expanded: null, submitted: null, reason: 'No form and no "Add new…" trigger found.' };
   }
 
@@ -967,12 +975,41 @@ function pageSubmit() {
   };
   const best = allClickable().filter((el) => score(el) > 0).sort((a, b) => score(b) - score(a))[0];
   if (!best) return { expanded: null, submitted: null, reason: `No primary action button among ${allClickable().length} visible buttons.` };
-  best.click();
+  press(best);
   return { expanded: null, submitted: textOf(best).slice(0, 40) };
 }
 
 /** Returns an IIFE script string that executes `pageSubmit` in the page. */
-function buildSubmitScript() { return `(${pageSubmit.toString()})()`; }
+function buildSubmitScript(human = false) { return `(${pageSubmit.toString()})(${Boolean(human)})`; }
+
+/**
+ * Human mode, one step at a time for the field at `index` (or the remembered button when index is null):
+ *   where — scrolls it into view and says where it is, or 'end' past the last field
+ *   ready — puts the cursor in it with any old text selected, and returns the text to type
+ *   check — if the keys didn't produce the text (a masked or reformatting field), sets it the old way
+ */
+function pageInputStep(step, index) {
+  const list = globalThis.__tsTyping || [];
+  if (index !== null && index >= list.length) return 'end';
+  const { el, value } = index === null ? { el: globalThis.__tsPress } : list[index];
+  if (!el || !el.isConnected) return null;
+  if (step === 'where') {
+    el.scrollIntoView({ block: 'center' });
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? { x: r.left, y: r.top, width: r.width, height: r.height } : null;
+  }
+  if (step === 'ready') {
+    try { el.focus(); el.select?.(); } catch {}
+    return value;
+  }
+  if (el.value === value) return true;
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+  if (setter) setter.call(el, value); else el.value = value;
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return false;
+}
+function buildInputStepScript(step, index = null) { return `(${pageInputStep.toString()})(${JSON.stringify(step)}, ${JSON.stringify(index)})`; }
 
 /**
  * Serialises the saved profiles back to a CSV in the same column shape we accept on import, so a
@@ -1110,5 +1147,5 @@ module.exports = {
   withoutSecrets,
   mergeImported,
   normalizeState, normalizeZip, decodeTextFile, parseCSV, parseProfilesCSV, buildProfile, normalizeCard, publicProfile, searchProfiles, planAssignments,
-  buildAutofillScript, buildSubmitScript, buildCardDigitsScript, chooseShownCard, cardLast4, normalizePhone, profilesToCSV,
+  buildAutofillScript, buildSubmitScript, buildInputStepScript, buildCardDigitsScript, chooseShownCard, cardLast4, normalizePhone, profilesToCSV,
 };

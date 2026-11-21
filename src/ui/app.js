@@ -1554,6 +1554,7 @@ function renderUpdates() {
   $('#setting-notify').checked = settings.notifyUpdates;
   $('#setting-autodownload').checked = settings.autoDownload;
   $('#setting-match-tz').checked = settings.matchProxyTimezone !== false;
+  $('#setting-human-input').checked = settings.humanInput !== false;
   $('#setting-auto-open-orders').checked = settings.autoOpenOrders === true;
   $('#setting-telemetry').checked = settings.telemetryEnabled !== false; // on by default; unchecking opts out
   $('#update-checked').textContent = lastChecked ? `Last checked ${new Date(lastChecked).toLocaleString()}` : '';
@@ -1637,7 +1638,7 @@ $('#update-dismiss').addEventListener('click', () => {
   bannerDismissedFor = `${status.kind}:${status.version ?? ''}`;
   renderUpdates();
 });
-for (const [selector, key] of [['#setting-notify', 'notifyUpdates'], ['#setting-autodownload', 'autoDownload'], ['#setting-match-tz', 'matchProxyTimezone'], ['#setting-auto-open-orders', 'autoOpenOrders'], ['#setting-telemetry', 'telemetryEnabled']]) {
+for (const [selector, key] of [['#setting-notify', 'notifyUpdates'], ['#setting-autodownload', 'autoDownload'], ['#setting-match-tz', 'matchProxyTimezone'], ['#setting-human-input', 'humanInput'], ['#setting-auto-open-orders', 'autoOpenOrders'], ['#setting-telemetry', 'telemetryEnabled']]) {
   $(selector).addEventListener('change', async (event) => {
     updateInfo = await window.fleet.saveSettings({ [key]: event.target.checked });
     renderUpdates();

@@ -41,7 +41,7 @@ const { buildReplayerScript } = require('./replayer-script');
 const playbooksStore = require('./playbooks');
 const { createLicenseClient } = require('./license/license');
 const { createTelemetryClient, instrumentIpc } = require('./license/telemetry');
-const { withoutSecrets, mergeImported, decodeTextFile, parseProfilesCSV, buildProfile, publicProfile, planAssignments, buildAutofillScript, buildSubmitScript, buildCardDigitsScript, chooseShownCard, profilesToCSV } = require('./profiles');
+const { withoutSecrets, mergeImported, decodeTextFile, parseProfilesCSV, buildProfile, publicProfile, planAssignments, buildAutofillScript, buildSubmitScript, buildInputStepScript, buildCardDigitsScript, chooseShownCard, profilesToCSV } = require('./profiles');
 const { resolveForTab } = require('./resolvers');
 
 // Before any handler is registered, so every one is covered.
@@ -2470,12 +2470,18 @@ async function autofill(tab, cardIndex = 0) {
       extras.cardHintLast4 = chooseShownCard(shown, profile.cards);
     } catch {}
   }
-  const script = buildAutofillScript(profile, profile.cards[Number(cardIndex) || 0] ?? null, extras);
+  const card = profile.cards[Number(cardIndex) || 0] ?? null;
+  const script = buildAutofillScript(profile, card, extras);
   const totals = { filled: 0, matched: 0, visible: 0, skipped: 0, iframes: 0, unreachableFrames: 0 };
-  const frames = [...tab.view.webContents.mainFrame.framesInSubtree];
+  const contents = tab.view.webContents;
+  const frames = [...contents.mainFrame.framesInSubtree];
   for (const frame of frames) {
     try {
-      const part = await frame.executeJavaScript(script);
+      // The top page's text fields are only listed here and typed with real keys below.
+      // shortcut: fields inside embedded frames are still set by script, type them too if sites flag it.
+      const part = settings.humanInput && frame === contents.mainFrame
+        ? await inHumanWorld(contents, buildAutofillScript(profile, card, { ...extras, human: true }))
+        : await frame.executeJavaScript(script);
       if (part && typeof part === 'object') {
         totals.filled += Number(part.filled) || 0;
         totals.matched += Number(part.matched) || 0;
@@ -2493,6 +2499,7 @@ async function autofill(tab, cardIndex = 0) {
       totals.unreachableFrames++;
     }
   }
+  if (settings.humanInput) await typePlanned(tab);
   let error = null;
   if (totals.filled === 0) {
     if (syncErrors.length > 0) error = `Sync issues: ${syncErrors.join('; ')}.`;
@@ -2514,12 +2521,118 @@ async function autofill(tab, cardIndex = 0) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------- Human input ----------
+//
+// Autofill and the bulk shortcuts used to set field values and call button.click() from a script. A
+// site sees that as untrusted events with no key presses and no pointer, on pages that are hidden, on
+// every selected tab in the same millisecond: exactly what bot detection looks for. So the top page is
+// driven with real mouse and keyboard input through Chromium, one tab at a time and shown while it
+// works, with a person's uneven pace.
+
+const between = (min, max) => min + Math.random() * (max - min);
+// An isolated world: the lists of fields to type into live there, where page scripts can't see them.
+const HUMAN_WORLD = 7301;
+const inHumanWorld = (contents, code) => contents.executeJavaScriptInIsolatedWorld(HUMAN_WORLD, [{ code }]);
+
+/** Moves the pointer to a spot inside `rect` (page coordinates) along an eased, slightly shaky path. */
+async function pointAt(tab, rect) {
+  const contents = tab.view.webContents;
+  const zoom = contents.getZoomFactor();
+  const to = { x: (rect.x + rect.width * between(0.3, 0.7)) * zoom, y: (rect.y + rect.height * between(0.35, 0.65)) * zoom };
+  const from = tab.pointer ?? { x: between(40, 400), y: between(60, 300) };
+  const steps = Math.round(between(9, 18));
+  for (let i = 1; i <= steps; i++) {
+    const eased = (i / steps) ** 2 * (3 - 2 * (i / steps));
+    const jitter = i < steps ? between(-1.5, 1.5) : 0;
+    contents.sendInputEvent({ type: 'mouseMove', x: Math.round(from.x + (to.x - from.x) * eased + jitter), y: Math.round(from.y + (to.y - from.y) * eased + jitter) });
+    await sleep(between(8, 22));
+  }
+  tab.pointer = to;
+  return { x: Math.round(to.x), y: Math.round(to.y) };
+}
+
+async function pressAt(tab, rect) {
+  const contents = tab.view.webContents;
+  const point = await pointAt(tab, rect);
+  await sleep(between(60, 180));
+  contents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+  await sleep(between(45, 110));
+  contents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+}
+
+async function typeText(contents, text) {
+  for (const key of text) {
+    // A key Chromium has no code for (some symbols) still arrives as its character.
+    try { contents.sendInputEvent({ type: 'keyDown', keyCode: key }); } catch {}
+    contents.sendInputEvent({ type: 'char', keyCode: key });
+    await sleep(between(15, 45));
+    try { contents.sendInputEvent({ type: 'keyUp', keyCode: key }); } catch {}
+    await sleep(between(30, 95)); // a quick typist: a dozen checkout fields still take seconds, not minutes
+  }
+}
+
+/** Clicks into each field the autofill script listed and types its value. */
+async function typePlanned(tab) {
+  const contents = tab.view.webContents;
+  for (let index = 0; index < 60; index++) {
+    if (!tabs.includes(tab) || contents.isDestroyed()) return;
+    try {
+      const where = await inHumanWorld(contents, buildInputStepScript('where', index));
+      if (where === 'end') return;
+      if (where) await pressAt(tab, where);
+      const text = await inHumanWorld(contents, buildInputStepScript('ready', index));
+      if (typeof text !== 'string') continue; // the field left the page
+      await sleep(between(90, 240));
+      await typeText(contents, text);
+      await inHumanWorld(contents, buildInputStepScript('check', index));
+      await sleep(between(150, 420));
+    } catch { return; } // the page navigated away mid-form
+  }
+}
+
+// One tab at a time: its page is shown and focused while it is filled, as it would be for a person,
+// and the next tab starts after an uneven pause. Also what keeps N selected tabs from acting at once.
+let humanTurn = Promise.resolve();
+function inTurn(tab, work) {
+  if (!settings.humanInput) return work(); // Settings → Browsing: instant, every tab at once
+  const run = humanTurn.then(async () => {
+    if (!tabs.includes(tab)) return { error: 'Tab closed.' };
+    if (selectedId !== tab.id) { selectTab(tab.id); await sleep(between(300, 800)); }
+    try { tab.view.webContents.focus(); } catch {}
+    return work();
+  });
+  humanTurn = run.then(() => sleep(between(900, 2600)), () => {});
+  return run;
+}
+
+// Spaces out page loads that are asked for together (Go home on many selected tabs), so a group of
+// accounts doesn't hit a site in the same instant. A single call still runs at once.
+let spacedUntil = 0;
+function spaced(tab, action) {
+  if (!settings.humanInput) return action(tab);
+  const wait = Math.max(0, spacedUntil - Date.now());
+  spacedUntil = Date.now() + wait + between(500, 1600);
+  setTimeout(() => { if (tabs.includes(tab)) action(tab); }, wait);
+}
 /** Expands an "Add new address/card" collapse OR clicks the primary action button on this page. */
 async function submitForm(tab) {
   const script = buildSubmitScript();
-  for (const frame of tab.view.webContents.mainFrame.framesInSubtree) {
+  const contents = tab.view.webContents;
+  for (const frame of contents.mainFrame.framesInSubtree) {
     try {
-      const result = await frame.executeJavaScript(script);
+      let result;
+      if (settings.humanInput && frame === contents.mainFrame) {
+        // Finds the button without touching it, then presses it with a real mouse click.
+        result = await inHumanWorld(contents, buildSubmitScript(true));
+        if (result?.expanded || result?.submitted) {
+          const where = await inHumanWorld(contents, buildInputStepScript('where'));
+          if (where && where !== 'end') await pressAt(tab, where);
+          else result = await frame.executeJavaScript(script); // off-screen or zero-size: press it by script
+        }
+      } else {
+        result = await frame.executeJavaScript(script);
+      }
       if (!result || !(result.expanded || result.submitted)) continue;
       return result.expanded ? { expanded: result.expanded } : { submitted: result.submitted };
     } catch {
@@ -2628,7 +2741,7 @@ async function autoLogin(tab, cardIndex = 0) {
   const steps = [];
   for (let step = 0; step < 5; step++) {
     await waitForLoad(tab, step === 0 ? 8000 : 6000);
-    await sleep(step === 0 ? 400 : 600); // let late-rendered scripts attach their fields
+    await sleep(step === 0 ? between(500, 1400) : between(700, 1600)); // let late-rendered scripts attach their fields, at a reader's pace
     const fill = await autofill(tab, cardIndex);
     if (fill.filled === 0) {
       // Nothing matched. Either we're done, or we're parked on an OTP page waiting for the SMS.
@@ -2639,11 +2752,11 @@ async function autoLogin(tab, cardIndex = 0) {
       }
       break;
     }
-    await sleep(400);
+    await sleep(between(300, 900));
     const submit = await submitForm(tab);
     steps.push({ filled: fill.filled, submitted: submit.submitted, error: submit.error });
     if (submit.error) break;
-    await sleep(1200); // let the next page's URL start loading before we re-check
+    await sleep(between(1100, 1900)); // let the next page's URL start loading before we re-check
   }
 
   const totalFilled = steps.reduce((n, s) => n + (s.filled ?? 0), 0);
@@ -3055,8 +3168,8 @@ function showTabMenu(tab, multi) {
     } },
     { label: `Burn IP on ${bulkTabs.length}`, enabled: can, click: () => bulkTabs.forEach((t) => burnIP(t)) },
     { label: `Clear & New IP on ${bulkTabs.length}`, click: () => bulkTabs.forEach((t) => clearThisTab(t)) },
-    { label: `Open sign-in page on ${bulkTabs.length}`, click: () => bulkTabs.forEach((t) => openSignInPage(t)) },
-    { label: `Auto-Login on ${bulkTabs.length}`, enabled: bulkTabs.every((t) => t.profileId), click: () => bulkTabs.forEach((t) => autoLogin(t)) },
+    { label: `Open sign-in page on ${bulkTabs.length}`, click: () => bulkTabs.forEach((t) => spaced(t, openSignInPage)) },
+    { label: `Auto-Login on ${bulkTabs.length}`, enabled: bulkTabs.every((t) => t.profileId), click: () => bulkTabs.forEach((t) => inTurn(t, () => autoLogin(t))) },
     { label: `Go Home on ${bulkTabs.length}`, click: () => bulkTabs.forEach((t) => runCommand('home', t.id)) },
     { label: `Close ${bulkTabs.length} tabs`, click: () => closeTabs(bulkIds) },
     { type: 'separator' },
@@ -3302,9 +3415,9 @@ const commands = {
     await clearCookiesOnTabs(Array.isArray(ids) ? ids : []); // notifies its own result
   },
   openSignIn: (tab) => openSignInPage(tab),
-  autofill: (tab, cardIndex) => autofill(tab, cardIndex),
-  autofillSubmit: (tab, cardIndex) => autofillAndSubmit(tab, cardIndex),
-  autoLogin: (tab, cardIndex) => autoLogin(tab, cardIndex),
+  autofill: (tab, cardIndex) => inTurn(tab, () => autofill(tab, cardIndex)),
+  autofillSubmit: (tab, cardIndex) => inTurn(tab, () => autofillAndSubmit(tab, cardIndex)),
+  autoLogin: (tab, cardIndex) => inTurn(tab, () => autoLogin(tab, cardIndex)),
   submitForm: (tab) => submitForm(tab),
   fetchOTP: (tab) => fetchOTPForTab(tab),
   watchOTP: (tab) => watchAndInsertOTP(tab),
@@ -3320,7 +3433,7 @@ const commands = {
   tabMenu: (tab, multi) => showTabMenu(tab, Array.isArray(multi) ? multi : null),
   reload: (tab) => reloadTab(tab),
   // Home: the tab's profile homepage when it has one, otherwise the launch screen's start page.
-  home: (tab) => loadInTab(tab, findProfile(tab.profileId)?.url || config.startURL),
+  home: (tab) => spaced(tab, () => loadInTab(tab, findProfile(tab.profileId)?.url || config.startURL)),
   stop: (tab) => tab.view.webContents.stop(),
   back: (tab) => tab.view.webContents.navigationHistory.goBack(),
   forward: (tab) => tab.view.webContents.navigationHistory.goForward(),
@@ -4125,7 +4238,7 @@ app.on('will-quit', () => {
  * opens, including a check that finished before the window had loaded.
  */
 const UPDATE_CHECK_INTERVAL = 2 * 60 * 60 * 1000;
-const SETTINGS_DEFAULTS = { autoDownload: true, notifyUpdates: true, matchProxyTimezone: true, autoOpenOrders: false, telemetryEnabled: true };
+const SETTINGS_DEFAULTS = { autoDownload: true, notifyUpdates: true, matchProxyTimezone: true, autoOpenOrders: false, telemetryEnabled: true, humanInput: true };
 let settings = { ...SETTINGS_DEFAULTS };
 let autoUpdater = null;
 let updateStatus = { kind: 'idle' };
