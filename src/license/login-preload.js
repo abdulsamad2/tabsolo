@@ -6,6 +6,7 @@ const { contextBridge, ipcRenderer, shell } = require('electron');
 contextBridge.exposeInMainWorld('licenseApi', {
   deviceInfo: () => ipcRenderer.invoke('license:device-info'),
   activate: (key) => ipcRenderer.invoke('license:activate', key),
+  subscribe: () => ipcRenderer.invoke('license:subscribe'),
   proceed: () => ipcRenderer.send('license:proceed'),
   openExternal: (url) => shell.openExternal(url),
 });

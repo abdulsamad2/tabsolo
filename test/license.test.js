@@ -112,6 +112,42 @@ test('deactivating frees the slot and keeps the license if the server can not be
   assert.equal((await client.deactivate()).error, 'no_license');
 });
 
+test('subscribing opens the checkout and activates the key once the payment lands', async (t) => {
+  const { client, file } = setup();
+  const opened = [];
+  let activations = 0;
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const reply = (status, body) => new Response(JSON.stringify(body), { status });
+    if (url.endsWith('/api/billing/checkout')) return reply(200, { ok: true, url: 'https://polar.example/checkout', key: 'TS-AAAA-BBBB-CCCC' });
+    activations += 1;
+    if (activations === 1) throw new Error('offline');
+    if (activations === 2) return reply(404, { ok: false, error: 'invalid_key' });
+    return reply(200, { ok: true, token: sign(claimsFor(client)), plan: 'solo' });
+  });
+  const result = await client.subscribe(async (url) => opened.push(url), { pollMs: 1 });
+  assert.deepEqual([result.ok, result.plan, activations], [true, 'solo', 3], 'waits through a network blip and the unpaid key');
+  assert.deepEqual(opened, ['https://polar.example/checkout']);
+  assert.equal(JSON.parse(fs.readFileSync(file)).licenseKey, 'TS-AAAA-BBBB-CCCC');
+});
+
+test('subscribing never opens anything but a web page, and stops when the server refuses the key', async (t) => {
+  const { client } = setup();
+  const opened = [];
+  const fetched = serverSays(t, 200, { ok: true, url: 'file:///Applications/Calculator.app', key: 'K' });
+  assert.equal((await client.subscribe(async (url) => opened.push(url), { pollMs: 1 })).ok, false);
+  assert.deepEqual(opened, []);
+  fetched.mock.restore();
+
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => (calls++ === 0
+    ? new Response(JSON.stringify({ ok: true, url: 'https://polar.example/checkout', key: 'K' }))
+    : new Response(JSON.stringify({ ok: false, error: 'expired' }), { status: 403 })));
+  assert.equal((await client.subscribe(async () => {}, { pollMs: 1 })).error, 'expired');
+  assert.equal(calls, 2, 'no more polling after a final answer');
+  calls = 0;
+  assert.equal((await client.subscribe(async () => {}, { pollMs: 1, tries: 0 })).error, 'checkout_timeout');
+});
+
 test('the computer id ignores the network adapter when a hardware id exists', () => {
   const { fingerprint } = require('../src/license/device');
   assert.equal(fingerprint('darwin', 'arm64', 'UUID', 'aa:aa'), fingerprint('darwin', 'arm64', 'UUID', 'bb:bb'));

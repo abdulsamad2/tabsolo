@@ -36,7 +36,7 @@
   --border: rgba(0, 0, 0, 0.08);
   --border-strong: rgba(0, 0, 0, 0.16);
   /* The interface is neutral. The brand color (the logo's blue, same as the website) appears only on
-     the main action, the selected tab's marker and the Beta badge. */
+     the main action and the selected tab's marker. */
   --brand: #1971c2;
   --brand-hover: #145a9c;
   --on-brand: #ffffff;
@@ -1234,9 +1234,3 @@ button.danger-solid:hover:not(:disabled) { background: #c92a2a; border-color: #c
 .group-locked button { justify-self: end; }
 
 .pd-warning { color: var(--error-text); }
-
-.beta-badge {
-  display: inline-block; vertical-align: middle; margin-left: 6px; padding: 2px 7px;
-  border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--on-brand); background: var(--brand); border: 1px solid var(--brand);
-}

@@ -1590,10 +1590,17 @@ $('#settings-open').addEventListener('click', openSettings);
 $('#launcher-settings').addEventListener('click', openSettings);
 $('#settings-close').addEventListener('click', () => setModal('#settings-sheet', false));
 async function renderLicense() {
-  const { key } = await window.fleet.getLicenseInfo();
+  const { key, plan } = await window.fleet.getLicenseInfo();
   $('#license-group').hidden = !key;
   $('#license-key').textContent = key ?? '';
+  $('#license-manage').hidden = plan === 'beta';
 }
+$('#license-manage').addEventListener('click', async () => {
+  const result = await window.fleet.manageSubscription();
+  if (!result.ok) showNotice(result.error === 'no_subscription'
+    ? 'This license isn’t a subscription, so there is nothing to manage.'
+    : 'Can’t open the subscription page. Check your connection and try again.', 6000);
+});
 $('#license-deactivate').addEventListener('click', async () => {
   if (!confirm('Deactivate TabSolo on this computer?\n\nAll tabs close and TabSolo restarts. You can activate here again with your license key.')) return;
   const button = $('#license-deactivate');
