@@ -44,7 +44,7 @@ subscribe.addEventListener('click', async () => {
   status.textContent = 'Finish the checkout in your browser. TabSolo unlocks by itself when it is done.';
   const result = await licenseApi.subscribe();
   subscribe.disabled = false;
-  subscribe.textContent = 'Start free trial';
+  subscribe.textContent = 'Subscribe';
   if (result?.ok) {
     status.className = 'status ok';
     status.textContent = '✓ Subscription active.';

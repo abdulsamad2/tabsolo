@@ -11,7 +11,7 @@
 //      device's fingerprint, save the returned token.
 //   3. Periodic /validate every 6h picks up server-side revocations.
 //   4. Subscribing: the server hands back a Polar checkout link and a new key. The key starts working
-//      once the checkout is paid (or its free trial starts), so the app activates it as soon as it does.
+//      once the checkout is paid, so the app activates it as soon as it does.
 
 const crypto = require('crypto');
 const fs = require('fs');

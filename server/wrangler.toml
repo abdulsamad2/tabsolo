@@ -27,5 +27,5 @@ GRACE_PERIOD_MS = "604800000"   # 7 days
 # Polar billing. Sandbox and live have separate tokens, products and webhook secrets; switch all four together.
 # Live. The sandbox is https://sandbox-api.polar.sh
 POLAR_API = "https://api.polar.sh"
-# The subscription product's ID. Its price and free-trial length are set on the product in Polar.
+# The subscription product's ID. Its price is set on the product in Polar.
 POLAR_PRODUCT_ID = "92155934-284d-438b-9762-5065c9e5986c"   # "Tab_solo" in the tabsolo organization

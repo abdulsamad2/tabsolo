@@ -252,7 +252,7 @@ app.post('/api/license/deactivate', async (c) => {
 });
 
 // ───────────────────────────────────────────────── billing (Polar)
-// Polar owns the subscription, its free trial and the payments. A license row mirrors each subscription,
+// Polar owns the subscription and the payments. A license row mirrors each subscription,
 // so activation, the device limit and offline tokens work exactly as for a hand-issued key.
 // The app asks for a checkout link and gets a new key with it; the key starts working when Polar's
 // webhook reports the subscription, which is what the app waits for.
@@ -273,7 +273,7 @@ async function polar(env: Env, path: string, body: unknown): Promise<any> {
   return res.json();
 }
 
-// The trial comes from the product's settings in Polar, which also refuses a second trial to the same customer.
+// The subscription charges from day one (no trial); the product's settings in Polar own the price.
 // With an email (a website account), the license shows on that account's page whatever email is typed at checkout.
 async function createCheckout(env: Env, successUrl: (key: string) => string, email?: string): Promise<{ url: string; key: string }> {
   const key = newLicenseKey();
@@ -369,8 +369,8 @@ app.post('/webhooks/polar', async (c) => {
   if (!String(event.type).startsWith('subscription.') || sub?.product_id !== c.env.POLAR_PRODUCT_ID) return c.json({ ok: true, ignored: true }, 202);
 
   const at = Date.parse(event.timestamp);
-  const entitled = sub.status === 'trialing' || sub.status === 'active';
-  // During a trial the current period is the trial. A failed card gets the same few days to be fixed;
+  const entitled = sub.status === 'active';
+  // A paid subscription runs to the end of the period it paid for. A failed card gets a few days to be fixed;
   // anything else (canceled, unpaid, paused, never paid) ends access now.
   const expiresAt = entitled ? Date.parse(sub.current_period_end) + RENEWAL_SLACK_MS
     : sub.status === 'past_due' ? Date.parse(sub.current_period_start) + RENEWAL_SLACK_MS
@@ -383,7 +383,7 @@ app.post('/webhooks/polar', async (c) => {
     c.env.DB
       .prepare('UPDATE licenses SET email = ?, expires_at = ?, polar_event_at = ?, max_devices = ?, plan = ? WHERE polar_subscription_id = ? AND polar_event_at <= ?')
       .bind(sub.customer.email, expiresAt, at, seats, planFor(seats), sub.id, at),
-    // First sight of the subscription. Ignored once its row exists, and never made for one that isn't paid or on trial.
+    // First sight of the subscription. Ignored once its row exists, and never made for one that isn't paid.
     ...(entitled ? [c.env.DB
       .prepare('INSERT OR IGNORE INTO licenses (key, email, plan, max_devices, expires_at, polar_subscription_id, polar_customer_id, polar_event_at, account_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(key, sub.customer.email, planFor(seats), seats, expiresAt, sub.id, sub.customer_id, at, sub.metadata?.account_email ?? null)] : []),

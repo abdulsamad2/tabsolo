@@ -24,7 +24,7 @@ const run = Date.now().toString(36).toUpperCase().replace(/[01IO]/g, 'X').padSta
 const licenseKey = `TS-${run.slice(0, 4)}-${run.slice(4)}-TEST`;
 const periodEnd = Date.now() + 7 * day;
 const sub = (extra = {}) => ({
-  id: `sub-${run}`, status: 'trialing', product_id: 'prod-test', customer_id: 'cus-1', customer: { email: 'buyer@example.com' },
+  id: `sub-${run}`, status: 'active', product_id: 'prod-test', customer_id: 'cus-1', customer: { email: 'buyer@example.com' },
   current_period_start: new Date(periodEnd - 7 * day).toISOString(), current_period_end: new Date(periodEnd).toISOString(),
   metadata: { license_key: licenseKey }, ...extra,
 });
@@ -43,9 +43,9 @@ await send('subscription.created', sub(), { at: t0 + 1000 });
 let license = await licenseFor(sub().id);
 assert.equal(license.key, licenseKey, 'the key the app was given at checkout');
 assert.deepEqual([license.plan, license.email, license.status, license.max_devices, license.polar_customer_id], ['solo', 'buyer@example.com', 'active', 1, 'cus-1']);
-assert.equal(license.expires_at, periodEnd + 3 * day, 'the trial lasts to the period end plus slack');
+assert.equal(license.expires_at, periodEnd + 3 * day, 'the paid period lasts to its end plus slack');
 
-// The trial converts: a new period, one month on.
+// A renewal: a new period, one month on.
 await send('subscription.updated', sub({ status: 'active', current_period_end: new Date(periodEnd + 30 * day).toISOString() }), { at: t0 + 2000 });
 assert.equal((await licenseFor(sub().id)).expires_at, periodEnd + 33 * day);
 

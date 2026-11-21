@@ -26,21 +26,20 @@ curl -X POST https://tabsolo-api.<account>.workers.dev/admin/license \
 
 Plans: `solo` (1 device), `pro` (3 devices), `team` (set `max_devices` yourself).
 
-## Subscriptions and free trials (Polar)
+## Subscriptions (Polar)
 
-Polar takes the payments and runs the trial; each subscription shows up here as a license that expires when the
+Polar takes the payments; each subscription shows up here as a license that expires when the
 subscription does. The product is priced per seat and a seat is a computer: the license's device limit follows the
-seats the customer pays for (plan `solo` for one, `team` for more), including when they change it in Polar's portal. In the app, "Start free trial" opens the Polar checkout and unlocks when it is paid.
+seats the customer pays for (plan `solo` for one, `team` for more), including when they change it in Polar's portal. Subscriptions charge from day one — no free trial. In the app, "Subscribe" opens the Polar checkout and unlocks when it is paid.
 
 One-time setup, first in the Polar sandbox (https://sandbox.polar.sh), then again for live:
 
-1. Create a subscription product. Set its price and its **trial period** on the product.
-2. Settings → Subscription → turn on **Prevent trial abuse**, so one customer gets one trial.
-3. Put the product's ID in `POLAR_PRODUCT_ID` in `wrangler.toml` (and `POLAR_API` to `https://api.polar.sh` for live).
-4. Create an organization access token with `checkouts:write` and `customer_sessions:write`: `npx wrangler secret put POLAR_ACCESS_TOKEN`
-5. Add a webhook endpoint for `https://tabsolo-api.<account>.workers.dev/webhooks/polar` with the `subscription.created`
+1. Create a subscription product and set its price. Do not add a trial period.
+2. Put the product's ID in `POLAR_PRODUCT_ID` in `wrangler.toml` (and `POLAR_API` to `https://api.polar.sh` for live).
+3. Create an organization access token with `checkouts:write` and `customer_sessions:write`: `npx wrangler secret put POLAR_ACCESS_TOKEN`
+4. Add a webhook endpoint for `https://tabsolo-api.<account>.workers.dev/webhooks/polar` with the `subscription.created`
    and `subscription.updated` events, then: `npx wrangler secret put POLAR_WEBHOOK_SECRET` (the `whsec_…` value).
-6. `npm run db:migrate:prod && npm run deploy`
+5. `npm run db:migrate:prod && npm run deploy`
 
 The website's account page does the same through `/admin/checkout`, `/admin/license` and `/admin/portal`, so
 deploy this server (step 6) before the website. A subscription started there shows its key on that account's page.
