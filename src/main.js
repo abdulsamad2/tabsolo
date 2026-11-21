@@ -20,8 +20,14 @@ for (const file of ['.env.local', '.env']) {
 }
 
 const {
-  app, BrowserWindow, WebContentsView, Menu, Notification, clipboard, dialog, ipcMain, net, safeStorage, session, shell,
+  app, BrowserWindow, WebContentsView, Menu, Notification, clipboard, dialog, ipcMain, nativeImage, net, safeStorage, session, shell,
 } = require('electron');
+
+// The app icon as a runtime image. electron-builder embeds build/icon.* into the installer, but that
+// only sets the Finder/exe icon — the running app's dock / taskbar / alt-tab icon is the Electron
+// default unless set here, and in dev there's no packaged icon at all. build/ isn't bundled (files is
+// src/** + package.json), so build-icon.js writes this copy into src/ alongside it.
+const APP_ICON = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
 const { randomUUID, randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
 const { normalizeConfig, validateConfig, createPool, fetchRemoteProxyList, proxyRule, proxyLabel, proxyKey, parseProxy, parseProxyList, serializeProxyLine, toURL } = require('./proxy');
 const { checkProxies: checkProxyReputations } = require('./reputation');
@@ -3884,6 +3890,7 @@ function createWindow() {
     minWidth: 760,
     minHeight: 480,
     title: 'TabSolo',
+    icon: APP_ICON,               // the window / taskbar / alt-tab icon on Windows and Linux
     backgroundColor: '#0a0a0b',
     frame: true,                  // explicit so Windows draws its standard min / max / close controls
     autoHideMenuBar: false,       // keep the menu bar visible on Windows so File / Window menus are reachable
@@ -4029,6 +4036,9 @@ ipcMain.handle('license:deactivate', async () => {
 });
 
 app.whenReady().then(async () => {
+  // macOS takes its dock icon from the app bundle, which is Electron's default in dev and whenever
+  // the OS icon cache is stale; setting it here makes the running app always show TabSolo.
+  if (process.platform === 'darwin' && !APP_ICON.isEmpty()) { try { app.dock.setIcon(APP_ICON); } catch {} }
   loadSettings();
   initLicenseAndTelemetry();
 
