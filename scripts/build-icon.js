@@ -135,4 +135,8 @@ fs.mkdirSync(outDir, { recursive: true });
 const png = pixelsToPNG(makePixels(PNG_SIZE), PNG_SIZE, PNG_SIZE);
 fs.writeFileSync(path.join(outDir, 'icon.png'), png);
 fs.writeFileSync(path.join(outDir, 'icon.ico'), pngToICO(pixelsToPNG(makePixels(ICO_SIZE), ICO_SIZE, ICO_SIZE)));
-process.stdout.write(`Wrote ${outDir}/icon.png (${png.length} bytes) and ${outDir}/icon.ico\n`);
+// A runtime copy inside src/ (the only tree that ships) so main.js can set the dock / taskbar icon of
+// the running app — build/ is not bundled, and the embedded icns only covers the Finder icon.
+const srcCopy = path.join(__dirname, '..', 'src', 'icon.png');
+fs.writeFileSync(srcCopy, png);
+process.stdout.write(`Wrote ${outDir}/icon.png (${png.length} bytes), ${outDir}/icon.ico and ${srcCopy}\n`);
