@@ -1,7 +1,7 @@
 {
   "name": "tabsolo",
   "productName": "TabSolo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Multi-session browser with a separate session and proxy per tab.",
   "main": "src/main.js",
   "private": true,
