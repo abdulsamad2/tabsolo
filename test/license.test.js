@@ -36,7 +36,8 @@ test('only a token signed by our key can be read', () => {
   const [body, sig] = token.split('.');
   const edited = Buffer.from(JSON.stringify({ k: 'K', d: 'dev1', iat: 1, exp: 9e15 })).toString('base64url');
   assert.equal(readToken(`${edited}.${sig}`, publicKey), null, 'edited expiry');
-  assert.equal(readToken(`${body}.${sig.slice(0, -2)}AA`, publicKey), null, 'edited signature');
+  // Change the first character: zeroing the end left 1 signature in 16 unchanged (an Ed25519 signature's last byte is often 0).
+  assert.equal(readToken(`${body}.${sig[0] === 'A' ? 'B' : 'A'}${sig.slice(1)}`, publicKey), null, 'edited signature');
   assert.equal(readToken(sign({ exp: 2 }, crypto.generateKeyPairSync('ed25519').privateKey), publicKey), null, 'another key');
   assert.equal(readToken(sign({ k: 'no exp' }), publicKey), null);
   assert.equal(readToken('nope', publicKey), null);
