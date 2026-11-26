@@ -38,15 +38,15 @@ try {
       event.preventDefault();
       event.stopPropagation();
       if (typeof plain !== 'string' || plain.length === 0) return;
-      // Prefer the standard "paste text into the focused editable" path.
+      // A normal edit of the focused field. Email and number boxes reject setRangeText, so pasting a
+      // copied secret into them used to do nothing.
+      if (document.execCommand('insertText', false, plain)) return;
       const el = document.activeElement;
       if (el && typeof el.setRangeText === 'function' && 'selectionStart' in el) {
         const start = el.selectionStart ?? el.value.length;
         const end = el.selectionEnd ?? el.value.length;
         el.setRangeText(plain, start, end, 'end');
         el.dispatchEvent(new Event('input', { bubbles: true }));
-      } else if (document.execCommand) {
-        document.execCommand('insertText', false, plain);
       }
     } catch (_) {}
   }, true);

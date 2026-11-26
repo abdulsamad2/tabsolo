@@ -2396,7 +2396,7 @@ async function insertOTP(tab, code) {
   const script = buildAutofillScript(profile, null, { otp: code, otpOnly: true });
   let filled = 0;
   for (const frame of tab.view.webContents.mainFrame.framesInSubtree) {
-    try { const r = await frame.executeJavaScript(script); filled += Number(r?.filled) || 0; } catch {}
+    try { const r = await answered(frame.executeJavaScript(script)); filled += Number(r?.filled) || 0; } catch {}
   }
   return filled;
 }
@@ -2466,7 +2466,7 @@ async function autofill(tab, cardIndex = 0) {
   // that lives in a payment iframe), so the CVV that gets filled belongs to that card.
   if (profile.cards.length > 0) {
     try {
-      const shown = await tab.view.webContents.mainFrame.executeJavaScript(buildCardDigitsScript());
+      const shown = await answered(tab.view.webContents.mainFrame.executeJavaScript(buildCardDigitsScript()));
       extras.cardHintLast4 = chooseShownCard(shown, profile.cards);
     } catch {}
   }
@@ -2481,7 +2481,7 @@ async function autofill(tab, cardIndex = 0) {
       // shortcut: fields inside embedded frames are still set by script, type them too if sites flag it.
       const part = settings.humanInput && frame === contents.mainFrame
         ? await inHumanWorld(contents, buildAutofillScript(profile, card, { ...extras, human: true }))
-        : await frame.executeJavaScript(script);
+        : await answered(frame.executeJavaScript(script));
       if (part && typeof part === 'object') {
         totals.filled += Number(part.filled) || 0;
         totals.matched += Number(part.matched) || 0;
@@ -2493,16 +2493,18 @@ async function autofill(tab, cardIndex = 0) {
       } else {
         totals.filled += Number(part) || 0;
       }
-    } catch {
+    } catch (error) {
       // Frame refused the script — most commonly a cross-origin iframe (payment widgets, OAuth,
       // CAPTCHA). We can't fill those; just note the count so we can tell the user why.
-      totals.unreachableFrames++;
+      if (frame === contents.mainFrame && error?.message === PAGE_SILENT) totals.silent = true;
+      else totals.unreachableFrames++;
     }
   }
   if (settings.humanInput) await typePlanned(tab);
   let error = null;
   if (totals.filled === 0) {
     if (syncErrors.length > 0) error = `Sync issues: ${syncErrors.join('; ')}.`;
+    else if (totals.silent) error = 'The page is still loading or has stopped responding. Wait for it to finish, or reload it, then try again.';
     else if (totals.unreachableFrames > 0 || totals.iframes > 0) {
       error = `This page's form appears to be inside an embedded frame (${totals.iframes + totals.unreachableFrames} on this page) — payment widgets like Stripe and 3-D-Secure gateways don't allow autofill from outside. Fill it by hand this time.`;
     }
@@ -2533,7 +2535,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const between = (min, max) => min + Math.random() * (max - min);
 // An isolated world: the lists of fields to type into live there, where page scripts can't see them.
 const HUMAN_WORLD = 7301;
-const inHumanWorld = (contents, code) => contents.executeJavaScriptInIsolatedWorld(HUMAN_WORLD, [{ code }]);
+const inHumanWorld = (contents, code) => answered(contents.executeJavaScriptInIsolatedWorld(HUMAN_WORLD, [{ code }]));
+// A script call into a frame never settles when the page navigates or its process dies mid-call. One
+// such call used to hold the turn queue below forever: autofill then did nothing on any tab until a restart.
+const PAGE_SILENT = 'The page did not answer.';
+const answered = (call, ms = 10000) => Promise.race([call, new Promise((_, reject) => setTimeout(reject, ms, new Error(PAGE_SILENT)))]);
 
 /** Moves the pointer to a spot inside `rect` (page coordinates) along an eased, slightly shaky path. */
 async function pointAt(tab, rect) {
@@ -2602,7 +2608,8 @@ function inTurn(tab, work) {
     try { tab.view.webContents.focus(); } catch {}
     return work();
   });
-  humanTurn = run.then(() => sleep(between(900, 2600)), () => {});
+  // Whatever else gets stuck in a turn (a sync URL that never answers), the next tab still gets its go.
+  humanTurn = Promise.race([run.catch(() => {}), sleep(180000)]).then(() => sleep(between(900, 2600)));
   return run;
 }
 
@@ -2628,10 +2635,10 @@ async function submitForm(tab) {
         if (result?.expanded || result?.submitted) {
           const where = await inHumanWorld(contents, buildInputStepScript('where'));
           if (where && where !== 'end') await pressAt(tab, where);
-          else result = await frame.executeJavaScript(script); // off-screen or zero-size: press it by script
+          else result = await answered(frame.executeJavaScript(script)); // off-screen or zero-size: press it by script
         }
       } else {
-        result = await frame.executeJavaScript(script);
+        result = await answered(frame.executeJavaScript(script));
       }
       if (!result || !(result.expanded || result.submitted)) continue;
       return result.expanded ? { expanded: result.expanded } : { submitted: result.submitted };
@@ -2661,7 +2668,7 @@ async function pageHasOTPField(tab) {
         return /\\botp\\b|one.?time|verif(y|ication).?code|sms.?code|\\bauth.?code\\b|two.?factor|2fa|confirmation.?code/.test(t);
       });
     })()`;
-    return Boolean(await tab.view.webContents.executeJavaScript(script));
+    return Boolean(await answered(tab.view.webContents.executeJavaScript(script)));
   } catch { return false; }
 }
 
